@@ -1,0 +1,78 @@
+Polling / Async structure
+
+Devices: hummingbird, winch, gpio
+
+The hummingbird is just a steady stream of async data, updating a few variables.
+
+The gpio responds to direct queries, presumably very quickly, but higher-level
+operations take time, like waiting for a 0-1 transition.
+
+The winch responds very quickly to all commands, but most higher-level operations
+take time.  Winch operations also need to be interruptible, and it would be helpful
+to poll information while they are going on.
+
+
+The winch class needs to handle two somewhat distinct tasks -
+  multiplex access to the serial port, formatting commands and parsing responses
+  compose actions from motion primitives.
+
+  maybe composing actions should be the purview of the CTD class, so that the winch
+  just makes sure that requests are handled in order, without conflicts.
+
+  "quick" operations handled by winch
+   msg()
+   start_velocity_move()
+   start_position_move()
+   start_force_move()
+   stop()
+   query_position()
+   query_velocity() # though this takes a finite amount of time for old motor
+   query_current()
+
+  Then one level up are finite time simple operations, which wait for completion
+   complete_position_move() 
+   force_move_to_stall() 
+
+  which could leverage a common polling method:
+   wait_for(conditions) # any combination of velocity, position, current criteria
+
+The CTD class has to do everything pretty much asynchronously, since it's running
+in a GUI thread.  Ultimately we'd want a way for the GUI to find out that an action
+has completed - not sure yet how to do that...
+
+handling aborts:
+
+Depends on knowing whether an operation is running or not - 
+  acquire a lock on the winch - so only this thread can issue commands.
+  if there is a thread running, set the abort flag.  The async handler
+    will clear this flag on end of operation
+
+To what degree do the CTD actions and winch actions need to be separated?
+Both could have asynchronous operations -
+  is there one STOP button, or a STOP WINCH and STOP CTD button?
+    -  
+  
+    
+-----
+
+How to show in the GUI what actions are going on asynchronously?
+ - could hook into async itself - so async operations are named, and
+   @async maintains a field which records what operation is going on
+ 
+Tow-yo mode:
+  set cable out based on maxDepth and velocity, probably an
+  executable python expression
+
+  Can it be triggered with the GPIO stuff?
+    - maybe when the CTD is set to tow-yo mode, then it will 
+      tow-yo continuously until the GPIO is un asserted.
+
+Async:
+    any method which could potentially take a finite amount of
+    time (tho for now, this does not include methods which
+    must acquire a lock), must be decorated with @async(name).
+    
+
+TODO: have ctd.py log the NMEA strings, as the winriver log is
+  buggy, and if the humminbird is shutdown unexpectedly it can
+  corrupt it's internal log.
