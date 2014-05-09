@@ -338,8 +338,14 @@ class AnimaticsWinch(object):
             self.msg("ZS MV AT=%i VT=%i G "%(self.accel,thruster_vel) )
         else:
             self.msg("ZS MV ADT=%i VT=%i G "%(self.accel,thruster_vel) )
-            
+
+    def release_brake(self):
+        if self.cmd_ver != 'old':
+            self.msg("BRKRLS ")
+
     def start_force_move(self,kg):
+        """ NB: must release brake first! """
+        
         # seems this command takes longer??
         # also MT acts immediately.
         # Stop, and get confirmation that it's done:
@@ -347,6 +353,7 @@ class AnimaticsWinch(object):
         self.motor_stop()
         T = int(self.force_kg_to_winch(kg))
         self.log.info("Will run force mode with torque of %s"%T)
+        print "Force mode, torque=",T
         if self.cmd_ver =='old':
             self.msg('MT ')
             self.msg("TS=65536 ")
@@ -355,6 +362,7 @@ class AnimaticsWinch(object):
             self.msg('ZS MT ')
             self.msg("T=%i "%T)
             self.msg("TS=250000 G ")
+        print "Done initiating force move"
         
     def start_position_move(self, absol_m=None,rel_m=None,velocity=None,direc=0,accel=None):
         """
@@ -568,8 +576,7 @@ class AnimaticsWinch(object):
 
     @async('ctd in by force')
     def ctd_in_by_force(self):
-        if self.cmd_ver != 'old':
-            self.msg("BRKRLS ")
+        self.release_brake()
         self.start_force_move(-self.block_a_block_kg)
         #time.sleep(1.0) # new motor is slower to ramp up
         while self.read_motor_velocity(dt=0.1) < -0.005:
