@@ -58,7 +58,14 @@ class FakeAnimatics(object):
             elif cmd.startswith('PRINT(UIA,#13)'):
                 self.buff += "100\r"
             else:
-                getattr(self,cmd)()
+                left_paren=cmd.find('(')
+                if left_paren>=0:
+                    args=cmd[left_paren+1:cmd.find(')')].split(',')
+                    cmd=cmd[:left_paren]
+                else:
+                    args=[]
+
+                getattr(self,cmd)(*args)
     def close(self):
         print "closing"
     def update_position(self):
@@ -128,6 +135,18 @@ class FakeAnimatics(object):
         pass
     def RCLK(self):
         self.buff+= "%d\r"%(1000*(time.time() - self.time_zero))
+    def RW(self,arg):
+        arg=int(arg)
+        if arg==0:
+            # Not real...
+            # bitmask - 16bits
+            self.buff+="127\r"
+    def REA(self):
+        """ report actual position error """
+        self.buff+="0\r"
+    def PRINT(self,*args):
+        print "PRINT(",args,")"
+        self.buff+="blah\r"
 
 from async import async,OperationAborted
             

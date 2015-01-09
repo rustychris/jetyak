@@ -236,6 +236,9 @@ class CTD(object):
         self.winch.abort()
         self.winch.stop_motor()
 
+    def print_status(self):
+        self.winch.status_report()
+
     update_rate_ms = 200
     
     def periodic_update(self):
@@ -243,6 +246,8 @@ class CTD(object):
             str_var.set(thunk())
         
         self.top.after(self.update_rate_ms,self.periodic_update)
+        # DBG:
+        self.winch.status_report()
         
     def gui_init_actions(self):
         buttons = []
@@ -257,7 +262,8 @@ class CTD(object):
                           ('Recover and reset CTD',self.recover_reset),
                           ('Set current position as top',self.reset_here),
                           ('STOP WINCH',self.stop_now),
-                          ('Stop automated casts',self.stop_auto) ]:
+                          ('Stop automated casts',self.stop_auto),
+                          ('Print status info to console',self.print_status) ]:
             buttons.append( Tkinter.Button(self.actions,text=text,command=cmd) )
         for btn in buttons:
             btn.pack(side=Tkinter.TOP,fill='x')
