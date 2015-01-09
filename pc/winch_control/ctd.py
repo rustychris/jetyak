@@ -274,14 +274,37 @@ class CTD(object):
                                    from_=-.50, to=0.5, resolution=0.01,
                                    orient=Tkinter.HORIZONTAL,
                                    variable = self.scale_var,
-                                   label="Run winch:")
+                                   label="Run at speed:")
         # go back to zero on mouse up
         self.scale.bind('<ButtonRelease>',lambda *x: (self.scale_var.set(0.0),self.scale_changed(0.0)) )
         self.scale.pack(side=Tkinter.TOP,fill='x')
 
+        # And a torque slider
+        self.tq_scale_var =Tkinter.DoubleVar()
+        self.tq_scale = Tkinter.Scale(self.actions,command=self.tq_scale_changed,
+                                      from_=-10, to=10, resolution=0.05,
+                                      orient=Tkinter.HORIZONTAL,
+                                      variable = self.tq_scale_var,
+                                      label="Run at force:")
+        self.tq_scale.bind('<ButtonRelease>',self.tq_stop)
+        self.tq_scale.bind('<ButtonPress>',self.tq_start)
+        self.tq_scale.pack(side=Tkinter.TOP,fill='x')
+
     def scale_changed(self,new_value):
         self.winch.start_velocity_move(self.scale_var.get())
 
+    def tq_start(self,evt):
+        print "Releasing brake"
+        self.winch.release_brake()
+        self.tq_scale_changed(0.0)
+    def tq_stop(self,evt):
+        print "End torque mode"
+        self.winch.motor_stop()
+        self.tq_scale_var.set(0.0)
+    def tq_scale_changed(self,new_value):
+        force_kg=self.tq_scale_var.get()
+        self.winch.start_force_move(force_kg)
+        
     def gui_init_state(self):
         # a list of parameters to update periodically
         self.state_values = [ ['Depth',lambda: "%.2f m"%self.monitor.maxDepth],

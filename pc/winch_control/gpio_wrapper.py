@@ -4,6 +4,8 @@ import winch_settings
 import logging
 
 class SerialGPIOReal(object):
+    gpio_recv=0 # for AP to signal to PC to cast
+    gpio_xmit=1 # for PC to signal to AP to stop
     def __init__(self):
         self.last_signal_out = None
         self.open_serial()
@@ -20,7 +22,7 @@ class SerialGPIOReal(object):
     def cast_signal(self):
         """ return boolean whether Ardupilot has signalled for a cast.
         """
-        return self.read(0) == 1
+        return self.read(self.gpio_recv) == 1
     def wait_for_cast_signal(self,poll=None):
         # assume we're called before the cast is signalled
         # for, but in case the output was left high, stall
@@ -38,7 +40,7 @@ class SerialGPIOReal(object):
             time.sleep(0.5)
 
     def signal_cast_in_progress(self):
-        self.write(1,1)
+        self.write(self.gpio_xmit,1)
         self.last_signal_out = 1
         # pass
     def signal_cast_complete(self):
