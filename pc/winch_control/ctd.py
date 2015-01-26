@@ -213,7 +213,8 @@ class CTD(object):
 
     def manual_cast(self):
         self.log.info('manual cast')
-        self.winch.ctd_cast(self.monitor.maxDepth,block=False,callback=self.manual_cast_complete) # testing
+        self.winch.ctd_cast(self.monitor.maxDepth,block=False,callback=self.manual_cast_complete)
+
     def manual_cast_complete(self,*args):
         self.log.info("Manual cast is complete")
 
@@ -243,11 +244,12 @@ class CTD(object):
     
     def periodic_update(self):
         for text,thunk,str_var in self.state_values:
-            str_var.set(thunk())
+            try:
+                str_var.set(thunk())
+            except Exception as exc:
+                print exc
         
         self.top.after(self.update_rate_ms,self.periodic_update)
-        # DBG:
-        self.winch.status_report()
         
     def gui_init_actions(self):
         buttons = []
@@ -271,12 +273,14 @@ class CTD(object):
         # And the slider
         self.scale_var = Tkinter.DoubleVar()
         self.scale = Tkinter.Scale(self.actions,command=self.scale_changed,
-                                   from_=-.50, to=0.5, resolution=0.01,
+                                   from_=-.750, to=0.75, resolution=0.01,
                                    orient=Tkinter.HORIZONTAL,
                                    variable = self.scale_var,
                                    label="Run at speed:")
         # go back to zero on mouse up
-        self.scale.bind('<ButtonRelease>',lambda *x: (self.scale_var.set(0.0),self.scale_changed(0.0)) )
+        # self.scale.bind('<ButtonRelease>',lambda *x: (self.scale_var.set(0.0),self.scale_changed(0.0)) )
+        self.scale.bind('<Shift-ButtonRelease>',self.slider_nostop)
+        self.scale.bind('<ButtonRelease>',self.slider_stop)
         self.scale.pack(side=Tkinter.TOP,fill='x')
 
         # And a torque slider
@@ -293,6 +297,12 @@ class CTD(object):
     def scale_changed(self,new_value):
         self.winch.start_velocity_move(self.scale_var.get())
 
+    def slider_nostop(self,evt):
+        print "NOT STOPPING!"
+    def slider_stop(self,evt):
+        self.scale_var.set(0.0)
+        self.scale_changed(0.0)
+
     def tq_start(self,evt):
         print "Releasing brake"
         self.winch.release_brake()
@@ -301,6 +311,8 @@ class CTD(object):
         print "End torque mode"
         self.winch.motor_stop()
         self.tq_scale_var.set(0.0)
+        self.winch.enable_brake()
+
     def tq_scale_changed(self,new_value):
         force_kg=self.tq_scale_var.get()
         self.winch.start_force_move(force_kg)

@@ -25,8 +25,14 @@ if location=='lab' or location == 'thistle':
     winch_com_port="COM1"
     hummingbird_is_real = False # triggers testing setup
     gpio_is_real = False
-    if location=='thistle':
-        winch_is_real = False
+if location=='thistle':
+    winch_is_real = False
+    gpio_is_real= False
+    hummingbird_is_real=False
+    if 1: # bench testing
+        # winch_com_port="/dev/cu.usbserial"
+        winch_com_port="/dev/cu.usbserial-FTGUK02I"
+        winch_is_real=True
 elif location=='jetyak':
     winch_com_port="COM4" # jetyak
 

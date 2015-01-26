@@ -1,0 +1,17 @@
+Details on getting the right settings for various operations
+with the animatics winch.
+
+Had to set EL=-1 to allow higher winch speeds
+
+If we go the route of constant torque, then rather than
+having to poll the position and turn it off, could use 
+doftware limits to handle this internally.  It wouldn't
+have a nice deceleration, but could be a good backup.
+
+EL is an absolute position error limit -
+ - the gearbox ratio is 28.0, and we have 4000 counts
+   per revolution.
+
+So you'd think that an error limit of, say, 2 full revolutions,
+would be sufficient.  That would be 224000
+
