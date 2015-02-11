@@ -233,8 +233,7 @@ class AnimaticsWinch(object):
         self.set_max_power_fraction(1.0)
         self.reset_encoder_position()
 
-                        
-    def msg(self,out):
+    def msg(self,out,verb=2,nresp=-1):
         """ send the commands in out to the motor.
         since some commands return a value, while others do not,
         there is a special format to out.
@@ -251,8 +250,10 @@ class AnimaticsWinch(object):
         if out[-1] not in [' ',"\r"]:
             self.log.warning("msg does not end in space or CR - assuming CR")
             out += "\r"
-        nresp = out.count("\r")
-        print "=>%s"%(repr(out))
+        if nresp<0:
+            nresp = out.count("\r")
+        if verb<3:
+            print "=>%s"%(repr(out))
         with self.lock:
             self.motor.write(out)
             responses = [self.my_readline() for n in range(nresp)]
@@ -424,7 +425,8 @@ class AnimaticsWinch(object):
             self.msg("TS=250000 G ")
         print "Done initiating force move"
         
-    def start_position_move(self, absol_m=None,rel_m=None,velocity=None,direc=0,accel=None):
+    def start_position_move(self, absol_m=None,rel_m=None,velocity=None,direc=0,accel=None,
+                            decel=None):
         """
         direc: if negative only an inward motion will be allowed, similar for positive
         """ 
@@ -450,11 +452,16 @@ class AnimaticsWinch(object):
             accel = 100            
         else:
             accel = int(accel)
+        if decel is None:
+            decel=accel
+        else:
+            decel = int(decel)
 
         if self.cmd_ver=='old':
             cmd = "ZS MP AT=%d VT=%i PT=%i G " % (accel,int(thruster_vel), int(target_position))
         else:
-            cmd = "ZS MP ADT=%d VT=%i PT=%i G " % (accel,int(thruster_vel), int(target_position))    
+            cmd = "ZS MP AT=%d DT=%d VT=%i PT=%i G "%(accel,decel,
+                                                      int(thruster_vel), int(target_position))    
         self.msg(cmd)
 
     def stop_motor(self):
@@ -468,47 +475,58 @@ class AnimaticsWinch(object):
     def stop(self):
         self.stop_motor()
 
-    def read_encoder_position(self):
+    def read_encoder_position(self,verb=5):
         if self.cmd_ver =='old':
-            line, = self.msg("RP\r") 
+            line, = self.msg("RP\r",verb=verb) 
         else:
-            line, = self.msg("RPA\r")
+            line, = self.msg("RPA\r",verb=verb)
         try:
             return float(line)
         except ValueError:
             print "Failed to parse encoder position '%s'"%line
             return None
 
-    def read_motor_current(self):
+    def read_motor_current(self,verb=5):
         # self.motor.write("RUIA\r")
-        line, = self.msg("PRINT(UIA,#13)\r")
+        line, = self.msg("PRINT(UIA,#13)\r",verb=verb)
         curr = float(line)
         self.log.info("current=%f"%curr)
         return curr
 
-    def read_motor_torque(self):
-        line, = self.msg("RTRQ\r")
+    def read_motor_torque(self,verb=5):
+        line, = self.msg("RTRQ\r",verb=verb)
         trq = float(line)
         self.log.info("torque=%f"%trq)
         return trq
         
-    def read_motor_velocity(self,dt=1.0):
-        posns = []
-        clks = []
-        if self.cmd_ver=='old':
-            cmd="RP\rRCLK\r"
+    def read_motor_velocity(self,dt=1.0,verb=5):
+        if 1: # try builtin measurement:
+            VA,counts0=[float(s) for s in self.msg("PRINT(VA,#13,PA,#13)\r",nresp=2,verb=verb)]
+            # that will be in encoder counts per PID sample * 65536
+            # pid sample rate
+            counts1=counts0 + (VA*self.srate/65536)
+            posn0=self.position_winch_to_m(counts0)
+            posn1=self.position_winch_to_m(counts1)
+            # Not sure where the 0.5 is coming from - but at least this gets it to
+            # match the commanded velocity.
+            return 0.5*(posn1 - posn0)
         else:
-            cmd="RPA\rRCLK\r"
-            
-        for it in range(2):            
-            pos,clk_ms = [float(s) for s in self.msg(cmd)]
-            posns.append(self.position_winch_to_m(pos))
-            clks.append(clk_ms/1000.0)
-            if it ==0:
-                time.sleep(dt)
+            posns = []
+            clks = []
+            if self.cmd_ver=='old':
+                cmd="RP\rRCLK\r"
+            else:
+                cmd="RPA\rRCLK\r"
 
-        # not sure why the factor of 4 is needed, but it is.
-        return 4*(posns[1] - posns[0])/(clks[1] - clks[0])
+            for it in range(2):            
+                pos,clk_ms = [float(s) for s in self.msg(cmd,verb=verb)]
+                posns.append(self.position_winch_to_m(pos))
+                clks.append(clk_ms/1000.0)
+                if it ==0:
+                    time.sleep(dt)
+
+            # not sure why the factor of 4 is needed, but it is.
+            return 4*(posns[1] - posns[0])/(clks[1] - clks[0])
 
     def status_report(self,sw0=None):
         if sw0 is None:
@@ -572,6 +590,7 @@ class AnimaticsWinch(object):
     @async('move to position')
     def complete_position_move(self, absol_m=None,rel_m=None,
                                velocity=None,direc=0,accel=None,
+                               decel=None,
                                max_current=None):
         """ absol_m: the target, ending cable out in meter
         rel_m: or targert cable out relative to current position
@@ -586,7 +605,6 @@ class AnimaticsWinch(object):
         max_current: a slack current measure - if current exceeds this figure and
           the torque is positive, assume that line has gone slack.  Needs some work.
 
-
         """
         self.log.debug("top of complete_position_move")
         self.poll()
@@ -600,7 +618,7 @@ class AnimaticsWinch(object):
 
         cmd_vel=[velocity]
         self.start_position_move(absol_m=absol_m,rel_m=rel_m,velocity=velocity,
-                                 direc=direc,accel=accel)
+                                 direc=direc,accel=accel,decel=decel)
         # time.sleep(0.5) # take care of this with elapsed below
         t_start = time.time()
         
@@ -609,7 +627,7 @@ class AnimaticsWinch(object):
             # vel = abs(self.read_motor_velocity(dt=0.1))
             elapsed = time.time() - t_start
 
-            sw0 = int(self.msg("RW(0)\r")[0])
+            sw0 = int(self.msg("RW(0)\r",verb=5)[0])
             in_trajectory=sw0&4
 
             if not in_trajectory:
@@ -651,25 +669,52 @@ class AnimaticsWinch(object):
     @async('ctd out')
     def ctd_out(self, max_depth):
         self.log.debug("ctd_out start")
-        self.complete_position_move(absol_m=self.arm_length+self.cage_length,
-                                    velocity=0.3*self.target_velocity,block=True,
-                                    direc=1)
-        self.log.debug("ctd_out: second move")
-        self.complete_position_move(absol_m=max_depth+self.arm_length+self.cage_length,block=True,
-                                    direc=1,accel=40,
-                                    max_current=self.deploy_slack_current)
-        self.log.debug("ctd_out end")
+        if 0: # old, discrete steps approach:
+            self.complete_position_move(absol_m=self.arm_length+self.cage_length,
+                                        velocity=0.3*self.target_velocity,block=True,
+                                        direc=1)
+            self.log.debug("ctd_out: second move")
+            self.complete_position_move(absol_m=max_depth+self.arm_length+self.cage_length,block=True,
+                                        direc=1,accel=80,
+                                        max_current=self.deploy_slack_current)
+            self.log.debug("ctd_out end")
+        else:
+            def vfunc(cable_out):
+                if cable_out<self.arm_length+self.cage_length:
+                    return 0.3*self.target_velocity
+                else:
+                    return self.target_velocity
+            self.complete_position_move(absol_m=max_depth+self.arm_length+self.cage_length,
+                                        block=True,
+                                        direc=1,accel=80,
+                                        max_current=self.deploy_slack_current,
+                                        velocity=vfunc)
     # pull winch back in, until we're back at the original position.
     @async('ctd in')
     def ctd_in(self):
-        self.complete_position_move(absol_m=self.arm_length+self.cage_length,block=True,direc=-1)
-        # very slow as CTD meets cage
-        self.complete_position_move(absol_m=self.arm_length,
-                                    velocity=0.2*self.target_velocity,
-                                    block=True,direc=-1)
-        # bit faster to bring it in to resting position
-        self.complete_position_move(absol_m=0.0,velocity=0.4*self.target_velocity,block=True,
-                                    direc=-1)
+        if 0: # old way, with separate moves
+            self.complete_position_move(absol_m=self.arm_length+self.cage_length,block=True,direc=-1)
+            # very slow as CTD meets cage
+            self.complete_position_move(absol_m=self.arm_length,
+                                        velocity=0.2*self.target_velocity,
+                                        block=True,direc=-1)
+            # bit faster to bring it in to resting position
+            self.complete_position_move(absol_m=0.0,velocity=0.4*self.target_velocity,block=True,
+                                        direc=-1)
+        else:
+            def vfunc(cable_out):
+                if cable_out>self.arm_length+self.cage_length:
+                    return self.target_velocity
+                elif cable_out>self.arm_length:
+                    return 0.2*self.target_velocity
+                else:
+                    return 0.4*self.target_velocity
+            self.complete_position_move(absol_m=0.0,
+                                        velocity=vfunc,
+                                        block=True,
+                                        accel=80,
+                                        decel=80,
+                                        direc=-1)
 
     @async('ctd cast')
     def ctd_cast(self,max_depth):

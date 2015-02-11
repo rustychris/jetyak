@@ -24,12 +24,17 @@ for speed in [9600]:
         ser = serial.Serial(port, speed, timeout=0.5)
         ser.write("\r")
         ser.write("RSP\r")   # maybe RPA instead for newer firmware?
+        ser.write("PRINT(VA,#13,PA,#13)\r") 
         ser.write("RPA\r")   # maybe RPA instead for newer firmware?
         while 1:
             t = time.time()
             char = ser.read(1)
             elapsed = time.time() - t
-            print "[%5ims] %s"%(elapsed*1000,repr(char))
+            #print "[%5ims] %s"%(elapsed*1000,repr(char))
+            if char=="\r":
+                sys.stdout.write("%s\n"%str(char))
+            sys.stdout.write(char)
+            sys.stdout.flush()
             if char == '':
                 break
         ser.close()

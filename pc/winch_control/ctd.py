@@ -19,7 +19,8 @@ import logging
 
 class CTD(object):
     towyo_factor=1.5
-    
+    depth_override=None
+
     def __init__(self):
         self.lock = threading.Lock()
         self.thread = None
@@ -51,9 +52,14 @@ class CTD(object):
             raise
         except Exception,exc:
             self.log.error("while gpio casting:" + str(exc))
-    
+
+    def depth_for_cast(self):
+        if self.depth_override is not None:
+            return self.depth_override
+        else:
+            return self.monitor.maxDepth
     def towyo_depth(self):
-        return self.monitor.maxDepth * self.towyo_factor 
+        return self.depth_for_cast() * self.towyo_factor 
             
     @async('tow-yo on gpio')
     def towyo_on_gpio(self):
@@ -145,7 +151,7 @@ class CTD(object):
         def on_complete(arg):
             self.waiting -= 1
             
-        self.winch.ctd_cast(self.monitor.maxDepth,
+        self.winch.ctd_cast(self.depth_for_cast(),
                             block=False,callback=on_complete) 
         while self.waiting >0:
             self.poll()
@@ -208,12 +214,13 @@ class CTD(object):
         self.towyo(block=False)
         
     def start_cast(self):
-        self.log.info('manual cast out %s' % self.monitor.maxDepth)
-        self.winch.ctd_cast(self.monitor.maxDepth)
+        d=self.depth_for_cast()
+        self.log.info('manual cast out %s' % d)
+        self.winch.ctd_cast(d)
 
     def manual_cast(self):
         self.log.info('manual cast')
-        self.winch.ctd_cast(self.monitor.maxDepth,block=False,callback=self.manual_cast_complete)
+        self.winch.ctd_cast(self.depth_for_cast(),block=False,callback=self.manual_cast_complete)
 
     def manual_cast_complete(self,*args):
         self.log.info("Manual cast is complete")
@@ -322,6 +329,7 @@ class CTD(object):
         self.state_values = [ ['Depth',lambda: "%.2f m"%self.monitor.maxDepth],
                               ['GPS velocity',lambda: "%.2f m/s"%self.monitor.velocity],
                               ['Cable out',lambda: "%.2f m"%self.winch.read_cable_out() ],
+                              ['Cable speed',lambda: "%.2f m/s"%self.winch.read_motor_velocity() ],
                               ['Winch current',lambda: "%.0f mA?"%self.winch.read_motor_current()],
                               ['Winch torque',lambda: "%.0f"%self.winch.read_motor_torque()],
                               ['Winch action',lambda: self.winch.async_action],
@@ -392,6 +400,24 @@ class CTD(object):
         add_gen_config('Max power fraction',
                        lambda v: self.winch.set_max_power_fraction(float(v)),
                        lambda: "%.2f"%self.winch.power_fraction)
+        add_gen_config('Override depth',
+                       self.set_depth_override_str,
+                       self.get_depth_override_str)
+
+    def set_depth_override_str(self,v):
+        v=v.strip()
+        if v=="":
+            self.depth_override=None
+        else:
+            try:
+                self.depth_override=float(v)
+            except ValueError:
+                pass
+    def get_depth_override_str(self):
+        if self.depth_override is None:
+            return ""
+        else:
+            return "%.2f"%self.depth_override
         
     def gui(self):
         self.top = top = Tkinter.Tk()

@@ -76,3 +76,17 @@ Async:
 TODO: have ctd.py log the NMEA strings, as the winriver log is
   buggy, and if the humminbird is shutdown unexpectedly it can
   corrupt it's internal log.
+
+--------------------------------------------------------------------------------
+
+Why does it sometimes get a current fault after a long spooling?
+
+moving the slider just sends things like
+ =>'ZS MV ADT=200 VT=-319718 G '
+ =>'ZS MV ADT=200 VT=0 G '
+
+where the second line is letting go of the slider.
+If instead it's started with SHIFT, and then stopped with a single
+click: well, now it seems fine.
+
+It is still stopping between the individual moves of a cast.
