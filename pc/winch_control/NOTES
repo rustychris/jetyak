@@ -81,12 +81,55 @@ TODO: have ctd.py log the NMEA strings, as the winriver log is
 
 Why does it sometimes get a current fault after a long spooling?
 
-moving the slider just sends things like
- =>'ZS MV ADT=200 VT=-319718 G '
- =>'ZS MV ADT=200 VT=0 G '
+ possibly because we're requesting a velocity above it's max.  
+ Seems that 0.44m/s (with the existing geometry settings) is
+ what it reports, even when commanded to go 0.5.
+ At the end of a long move at a velocity higher than supported,
+ it probably tries some correction and faults.
 
-where the second line is letting go of the slider.
-If instead it's started with SHIFT, and then stopped with a single
-click: well, now it seems fine.
+# this is for 0.5m/s - tends to fault.
+VT=1229686
 
-It is still stopping between the individual moves of a cast.
+# this is for 0.4m/s - seems to be okay.
+VT=983749
+
+--------------------------------------------------------------------------------
+
+Detecting slack line:
+ not too bad with slack torque 15000 and current 300.
+A few tests:
+position move - end on current=378.000000 torq=29711.000000
+position move - end on current=324.000000 torq=29369.000000
+
+torque=1580 is about the threshold for wire out. 
+about the same for wire in.
+
+1. a high current/torque stop should decelerate more quickly 
+   than it is right now.
+2. how quickly does it sample the current and torque? not that fast - could combine to
+  a single command, see if anything else is slowing it down.
+3. is it necessary to read the current?  torque should be enough.
+ - actually probably not.  It can be quite high even with some force
+   on the line.
+4. What about falling back to a torque mode in these situations?
+5. Double
+
+
+
+Dimensions:
+ from inner spool to edge of drum - 50mm
+ diameter of guards 17.2cm
+ radius of spool is 0.9cm smaller
+  => max. diameter of spool 17.2 - 2*0.9 = 15.4cm
+ one revolution on empty drum 17cm
+
+verified revolutions: it's good!
+
+Time to reel in all of the line (112m), with velocity reading
+0.4: 
+VT=-983749
+elapsed: 6:25 (+-10)
+revolutions: -415.4
+
+ 
+

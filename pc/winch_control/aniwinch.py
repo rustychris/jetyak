@@ -153,7 +153,7 @@ from async import async,OperationAborted
 class AnimaticsWinch(object):
     cmd_ver = '523' # or 'old'
     enc_count = 4000 # std. for 17 and 23 sized motors - counts per rev.
-    target_velocity = 0.25
+    target_velocity = 0.4
 
     spool_radius = 0.025 # inner radius. 0.07
     spool_width = 0.031
@@ -170,7 +170,10 @@ class AnimaticsWinch(object):
     # deploy_slack_current = 300
     # deploy_slack_torque = 500
     # for heavy cage:
-    deploy_slack_current = 300
+    # deploy_slack_current = 300
+    # deploy_slack_torque = 15000
+    # bench testing:
+    deploy_slack_current = 220
     deploy_slack_torque = 15000
     
     # torque mode parameters:
@@ -356,9 +359,11 @@ class AnimaticsWinch(object):
         #    * self.spool_radius * 2 *math.pi
         # new way:
         # get drum revolutions from nondim position:
-        revs=nondim/float(self.enc_count) / self.gear_box_ratio
+        revs=self.position_winch_to_revs(nondim)
         m=2*math.pi*revs*self.spool_radius_full - 2*math.pi*revs**2/2*self.wire_area/self.spool_width
         return m
+    def position_winch_to_revs(self,nondim):
+        return nondim/float(self.enc_count) / self.gear_box_ratio
 
     def position_m_to_winch(self,m):
         # old way:
@@ -548,16 +553,23 @@ class AnimaticsWinch(object):
             print "Or is it",self.msg("PRINT(EA,#13)\r")[0]
             # print " Be: ",self.msg("PRINT(Be,#13)[0]\r")
         print "---"
-        
-    def read_cable_out(self):
+
+    def read_cable_out(self,extra=False):
         diff = self.read_encoder_position()
         if diff is not None:
             pos = self.position_winch_to_m(diff)
             if abs(pos) > 0.01:
                 self.log.debug('cable_out=%.2f'%pos)
-            return pos
+            if extra:
+                revs=self.position_winch_to_revs(diff)
+                return pos,revs
+            else:
+                return pos
         else:
-            return None
+            if extra:
+                return None,None
+            else:
+                return None
 
     ### Polling ###
     def poll(self):
@@ -646,12 +658,19 @@ class AnimaticsWinch(object):
                 # it's having to work to push line out.
                 current = self.read_motor_current()
                 torque = self.read_motor_torque()
+                print "curr=%f    torq=%f"%(current,torque)
                 if current > max_current and \
                     torque > self.deploy_slack_torque:
                     # that torque threshold is hopefully going to cancel out
                     # the times that it's bobbing around.
                     print "position move - end on current=%f torq=%f"%(current,
                                                                        torque)
+                    # Try stopping more explicitly:
+                    self.stop_motor()
+                    # TODO: if this works, get some better logic which will
+                    # wait for it to stop.
+                    print "WAITING!!"
+                    time.sleep(5)
                     return True
             # variable speed tests:
             if vfunc:

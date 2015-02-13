@@ -280,7 +280,7 @@ class CTD(object):
         # And the slider
         self.scale_var = Tkinter.DoubleVar()
         self.scale = Tkinter.Scale(self.actions,command=self.scale_changed,
-                                   from_=-.750, to=0.75, resolution=0.01,
+                                   from_=-.450, to=0.45, resolution=0.01,
                                    orient=Tkinter.HORIZONTAL,
                                    variable = self.scale_var,
                                    label="Run at speed:")
@@ -328,7 +328,7 @@ class CTD(object):
         # a list of parameters to update periodically
         self.state_values = [ ['Depth',lambda: "%.2f m"%self.monitor.maxDepth],
                               ['GPS velocity',lambda: "%.2f m/s"%self.monitor.velocity],
-                              ['Cable out',lambda: "%.2f m"%self.winch.read_cable_out() ],
+                              ['Cable out',lambda: "%.2f m/%.2frev"%self.winch.read_cable_out(extra=True) ],
                               ['Cable speed',lambda: "%.2f m/s"%self.winch.read_motor_velocity() ],
                               ['Winch current',lambda: "%.0f mA?"%self.winch.read_motor_current()],
                               ['Winch torque',lambda: "%.0f"%self.winch.read_motor_torque()],
