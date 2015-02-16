@@ -121,7 +121,9 @@ Dimensions:
  diameter of guards 17.2cm
  radius of spool is 0.9cm smaller
   => max. diameter of spool 17.2 - 2*0.9 = 15.4cm
- one revolution on empty drum 17cm
+  => min. diameter of spool 17.2 - 2*0.9 - 2*5.0 = 5.4cm
+  => "full" diameter of spool 15.4 -2*1.0 = 13.4cm
+ one revolution on empty drum 17cm (or 16.96 from diameter)
 
 verified revolutions: it's good!
 
@@ -131,5 +133,37 @@ VT=-983749
 elapsed: 6:25 (+-10)
 revolutions: -415.4
 
- 
+so that's actually 0.29 m/s
 
+After marking the line at 10m intervals:
+  wire out      winch report
+   10.0         10.11
+   20.0         20.44
+   30.0         30.83
+   40.0         41.31
+   50.0         51.66 (some loose windings in there)
+   60.0         62.16
+   70.0         72.54
+   80.0         83.15
+   90.0         93.68
+  100.0        104.31
+  110.0        115.04
+  115.0        120.42
+
+410.6 revolutions total.
+
+but that was with a slightly loose wind.  On bringing it back in, the wind was 
+tighter, and took 423 revolutions.
+
+So what changes would be necessary to make the above numbers line up?
+
+################################################################################
+
+TODO: have things like torque, position, current avoid double querying.
+Something like having a "freshness" argument, so that when it matters, we
+can force a new query, but for the GUI, can report a value that's 2 seconds
+old and avoid querying over and over.
+
+TODO: there is some ambiguity in read_motor_velocity() - sometimes we want
+ a velocity as if the spool were full, and sometimes we want the estimated
+ actual wire velocity.

@@ -260,17 +260,18 @@ class CTD(object):
         
     def gui_init_actions(self):
         buttons = []
-        for text,cmd in [ ('Start GPIO-triggered single-cast mode',self.enable_hw_trig_cast),
-                          ('Start GPIO-triggered tow-yo',self.enable_hw_trig_towyo),
-                          # ('Enable Speed-based CTD mode', self.enable),
+        for text,cmd in [ ('STOP WINCH',self.stop_now),
                           ('Manual CTD cast now',self.manual_cast),
                           ('Tow-yo now',self.enable_towyo),
+                          ('Set current position as top',self.reset_here),
+                          ('Recover and reset CTD',self.recover_reset),
+                          ('Recover CTD',self.recover),
+
+                          ('Start GPIO-triggered single-cast mode',self.enable_hw_trig_cast),
+                          ('Start GPIO-triggered tow-yo',self.enable_hw_trig_towyo),
+                          # ('Enable Speed-based CTD mode', self.enable),
                           ('Force enable autopilot via GPIO',self.force_enable_gpio),
                           ('Force disable autopilot via GPIO',self.force_disable_gpio),
-                          ('Recover CTD',self.recover),
-                          ('Recover and reset CTD',self.recover_reset),
-                          ('Set current position as top',self.reset_here),
-                          ('STOP WINCH',self.stop_now),
                           ('Stop automated casts',self.stop_auto),
                           ('Print status info to console',self.print_status) ]:
             buttons.append( Tkinter.Button(self.actions,text=text,command=cmd) )
@@ -389,7 +390,8 @@ class CTD(object):
             add_gen_config(text,setter,getter)
 
         add_float_config("Target velocity [m/s]", self.winch, "target_velocity", "%.2f")
-        add_float_config('Spool radius [m]', self.winch,"spool_radius", "%.3f")
+        add_float_config('Inner radius [m]', self.winch,"spool_radius_inner", "%.4f")
+        add_float_config('Outer radius [m]', self.winch,"spool_radius_outer", "%.4f")
         add_float_config('Full-in force [kg]',self.winch,"block_a_block_kg","%.2f")
         add_float_config('Zero tension current',self.winch,"deploy_slack_current","%.0f")
         add_float_config('Deploy slack torque',self.winch,"deploy_slack_torque","%.0f")

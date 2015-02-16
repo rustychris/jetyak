@@ -155,12 +155,29 @@ class AnimaticsWinch(object):
     enc_count = 4000 # std. for 17 and 23 sized motors - counts per rev.
     target_velocity = 0.4
 
-    spool_radius = 0.025 # inner radius. 0.07
+    # measured with ruler and by circumference
+    # 2.3mm is from tuning.
+    spool_radius_inner = 0.054/2. - 0.0023
+    # spool diam is 15.4cm, and "full" has about 1cm extra.
+    # 2mm is from tuning
+    spool_radius_outer = 0.154/2-0.01 - 0.002
+
+    # this doesn't really matter, just used to dimensionalize
+    # wire_area.
     spool_width = 0.031
-    spool_radius_full = 0.076 # for determining velocity settings
+
+    # how many revolutions it takes to pay out all of the line
+    # somewhere in the range 410 -- 425, depending on tensions during
+    # winding.
+    spool_revolutions_full=415.4 # to pay out 112m of line.
 
     # 90% efficient x pi D^2/4
-    wire_area=0.9*math.pi*0.0018**2/4. # packed cross-sectional area of wire.
+    # diameter here is backed out the measure revolutions
+    # wire_area=0.9*math.pi*0.00205**2/4. # packed cross-sectional area of wire.
+    wire_area=spool_width*(spool_radius_outer-spool_radius_inner) / spool_revolutions_full
+
+    # this appears to be the max speed that it can swing.
+    vt_max=1102000
 
     gear_box_ratio = 28.0 # 20.8 for old winch
     slack_current_threshold = -10
@@ -202,7 +219,6 @@ class AnimaticsWinch(object):
         # parameters to update during polling:
         self.monitor = dict(position_m=None,current_ma=None,volts=None)
         self.abort_async = False
-
 
     def init_motor(self,port):
         if winch_settings.winch_is_real:
@@ -339,17 +355,24 @@ class AnimaticsWinch(object):
     def force_winch_to_kg(self,nondim):
         return nondim / self.force_kg_to_winch(1.0)
     
-    def velocity_mps_to_winch(self,vel_meters_per_second):
+    def velocity_mps_to_winch(self,vel_meters_per_second,clip=True):
         # the numbers below are from the animatics users guide (5.23, page 22)
         # VT = velocity * ((counts per rev) / (sample rate)) * 65536
         # velocity above is in revolutions per second
         # counts per rev is 4000, sample rate is 8000, so the
         # multiplier is 32768.
         
-        circumference = self.spool_radius_full * 2 * math.pi
+        circumference = self.spool_radius_outer * 2 * math.pi
         rps = vel_meters_per_second / circumference
         # The 2 is totally empirical.
-        return 2 * rps * float(self.enc_count) / self.srate * 65536.0 * self.gear_box_ratio
+        vel= 2 * rps * float(self.enc_count) / self.srate * 65536.0 * self.gear_box_ratio
+        if clip:
+            if vel>self.vt_max:
+                vel=self.vt_max
+            elif vel<-self.vt_max:
+                vel=-self.vt_max
+        return vel
+
     def velocity_winch_to_mps(self,vel_winch):
         return vel_winch /self.velocity_mps_to_winch(1.0)
 
@@ -360,7 +383,7 @@ class AnimaticsWinch(object):
         # new way:
         # get drum revolutions from nondim position:
         revs=self.position_winch_to_revs(nondim)
-        m=2*math.pi*revs*self.spool_radius_full - 2*math.pi*revs**2/2*self.wire_area/self.spool_width
+        m=2*math.pi*revs*self.spool_radius_outer - 2*math.pi*revs**2/2*self.wire_area/self.spool_width
         return m
     def position_winch_to_revs(self,nondim):
         return nondim/float(self.enc_count) / self.gear_box_ratio
@@ -377,7 +400,7 @@ class AnimaticsWinch(object):
         # = 0
 
         a=math.pi*self.wire_area/self.spool_width
-        b=-2*math.pi*self.spool_radius_full
+        b=-2*math.pi*self.spool_radius_outer
         c=m
 
         # choose the smaller of the roots - the larger root is a greater number of
@@ -391,15 +414,13 @@ class AnimaticsWinch(object):
     accel = 200
     ### synchronous/fast helper functions ###
     def start_velocity_move(self, vel_meters_per_second):
-        # TODO: seems that when motion is ongoing, and a new
-        # command is issued with low or zero velocity, it stops too quickly.
         self.log.info("velocity move = %.3f"%vel_meters_per_second)
-        thruster_vel = self.velocity_mps_to_winch(vel_meters_per_second)
+        vel = self.velocity_mps_to_winch(vel_meters_per_second,clip=True)
 
         if self.cmd_ver == 'old':
-            self.msg("ZS MV AT=%i VT=%i G "%(self.accel,thruster_vel) )
+            self.msg("ZS MV AT=%i VT=%i G "%(self.accel,vel) )
         else:
-            self.msg("ZS MV ADT=%i VT=%i G "%(self.accel,thruster_vel) )
+            self.msg("ZS MV ADT=%i VT=%i G "%(self.accel,vel) )
 
     def release_brake(self):
         if self.cmd_ver != 'old':
@@ -438,13 +459,13 @@ class AnimaticsWinch(object):
         # specified in m, relative to current zero, or current
         # position
         velocity = velocity or self.target_velocity
-        thruster_vel = self.velocity_mps_to_winch(velocity)
+        vel = int( self.velocity_mps_to_winch(velocity) )
         # newer firmware may want ADT instead of AT
         if rel_m is not None:
             present_m = self.read_cable_out()
             absol_m = present_m + rel_m
         self.log.info("Starting move to cable length %s"%absol_m)
-        target_position = self.position_m_to_winch(absol_m) 
+        target_position = int( self.position_m_to_winch(absol_m) )
 
         if direc != 0:
             pos = self.read_cable_out()
@@ -463,10 +484,9 @@ class AnimaticsWinch(object):
             decel = int(decel)
 
         if self.cmd_ver=='old':
-            cmd = "ZS MP AT=%d VT=%i PT=%i G " % (accel,int(thruster_vel), int(target_position))
+            cmd = "ZS MP AT=%d VT=%i PT=%i G " % (accel,vel, target_position)
         else:
-            cmd = "ZS MP AT=%d DT=%d VT=%i PT=%i G "%(accel,decel,
-                                                      int(thruster_vel), int(target_position))    
+            cmd = "ZS MP AT=%d DT=%d VT=%i PT=%i G "%(accel,decel,vel, target_position)
         self.msg(cmd)
 
     def stop_motor(self):
@@ -491,16 +511,17 @@ class AnimaticsWinch(object):
             print "Failed to parse encoder position '%s'"%line
             return None
 
-    def read_motor_current(self,verb=5):
-        # self.motor.write("RUIA\r")
-        line, = self.msg("PRINT(UIA,#13)\r",verb=verb)
-        curr = float(line)
+    def read_motor_current(self,uia=None,verb=5):
+        if uia is None:
+            uia, = self.msg("PRINT(UIA,#13)\r",verb=verb)
+        curr = float(uia)
         self.log.info("current=%f"%curr)
         return curr
 
-    def read_motor_torque(self,verb=5):
-        line, = self.msg("RTRQ\r",verb=verb)
-        trq = float(line)
+    def read_motor_torque(self,rtrq=None,verb=5):
+        if rtrq is None:
+            rtrq, = self.msg("RTRQ\r",verb=verb)
+        trq = float(rtrq)
         self.log.info("torque=%f"%trq)
         return trq
         
@@ -554,8 +575,11 @@ class AnimaticsWinch(object):
             # print " Be: ",self.msg("PRINT(Be,#13)[0]\r")
         print "---"
 
-    def read_cable_out(self,extra=False):
-        diff = self.read_encoder_position()
+    def read_cable_out(self,rpa=None,extra=False):
+        if rpa is None:
+            diff = self.read_encoder_position()
+        else:
+            diff = float(rpa)
         if diff is not None:
             pos = self.position_winch_to_m(diff)
             if abs(pos) > 0.01:
@@ -572,14 +596,16 @@ class AnimaticsWinch(object):
                 return None
 
     ### Polling ###
-    def poll(self):
+    def poll(self,rpa=None,uia=None):
         """ long-running operations should arrange to call this frequently,
         it updates status information from the motor, and checks self.abort_async
         to see whether the current operation should be aborted.
 
         Note that on abort, the motor will be stopped.
+
+        A bit kludgey, but the caller can supply recently read strings
+        for monitored values to avoid double querying.
         """
-        #print "winch::poll()"
         if self.abort_async:
             self.abort_async = False # show that it's been received.
             self.log.info("poll(): raising exception")
@@ -588,12 +614,14 @@ class AnimaticsWinch(object):
             else:
                 exc = OperationAborted(cleanup=False)
             raise exc
-        for k in self.monitor.keys():
-            if k=='position_m':
-                self.monitor[k] = self.read_cable_out()
-                #print "Cable out",self.monitor[k]
-            elif k=='current_ma':
-                self.monitor[k] = self.read_motor_current()
+        # I don't think this is being used any more, and just slows
+        # down the loop.
+
+        # for k in self.monitor.keys():
+        #     if k=='position_m':
+        #         self.monitor[k] = self.read_cable_out(rpa=rpa)
+        #     elif k=='current_ma':
+        #         self.monitor[k] = self.read_motor_current(uia=uia)
     def handle_abort(self):
         self.log.info("handle_abort: stopping motor on abort")
         self.motor_stop()
@@ -624,9 +652,10 @@ class AnimaticsWinch(object):
 
         if callable(velocity):
             vfunc=velocity
-            velocity=vfunc(self.read_cable_out())
         else:
-            vfunc=None
+            vfunc=lambda x: velocity
+
+        velocity=vfunc(self.read_cable_out())
 
         cmd_vel=[velocity]
         self.start_position_move(absol_m=absol_m,rel_m=rel_m,velocity=velocity,
@@ -639,7 +668,12 @@ class AnimaticsWinch(object):
             # vel = abs(self.read_motor_velocity(dt=0.1))
             elapsed = time.time() - t_start
 
-            sw0 = int(self.msg("RW(0)\r",verb=5)[0])
+            # sw0 = int(self.msg("RW(0)\r",verb=5)[0])
+
+            # Read everything at once - too much overhead in individual calls
+            sw0,uia,rtrq,rpa=self.msg("RW(0)\rPRINT(UIA,#13)\rRTRQ\rRPA\r",verb=5)
+            sw0=int(sw0)
+
             in_trajectory=sw0&4
 
             if not in_trajectory:
@@ -656,25 +690,56 @@ class AnimaticsWinch(object):
                 # going too fast, but we only care about when
                 # the current is higher and torque is positive -
                 # it's having to work to push line out.
-                current = self.read_motor_current()
-                torque = self.read_motor_torque()
+                current = self.read_motor_current(uia=uia)
+                torque = self.read_motor_torque(rtrq=rtrq)
                 print "curr=%f    torq=%f"%(current,torque)
                 if current > max_current and \
                     torque > self.deploy_slack_torque:
                     # that torque threshold is hopefully going to cancel out
                     # the times that it's bobbing around.
-                    print "position move - end on current=%f torq=%f"%(current,
-                                                                       torque)
-                    # Try stopping more explicitly:
-                    self.stop_motor()
-                    # TODO: if this works, get some better logic which will
-                    # wait for it to stop.
-                    print "WAITING!!"
-                    time.sleep(5)
-                    return True
+                    print "position move - abort on current=%f torq=%f"%(current,
+                                                                         torque)
+                    if 0: # Try stopping more explicitly:
+                        self.stop_motor()
+                        # I don't think we have to wait here...
+                        return True
+                    else: # freewheel and resume?
+                        # not entirely sure how much of this incantation is
+                        # required - 
+                        self.release_brake()
+                        self.msg("OFF")
+
+                        print "Free-wheeling for 3 seconds..."
+                        time.sleep(3.0)
+                        vel=self.read_motor_velocity()
+                        print "Free-wheel velocity is %.2f, commanded=%.2f"%(vel,cmd_vel[0])
+
+                        #if vel>0.25*cmd_vel[0]:
+                        #    print "Will try resuming down cast"
+
+
+                        # TODO: if after a few seconds of free-wheeling
+                        # the velocity was high enough, then resume the
+                        # trajectory.
+                        # if not, slowly bring it to zero velocity then
+                        # break out.
+                        if 1:
+                            # go into torque mode first?
+                            print "Zero counter torque"
+                            self.msg("MT T=0 TS=250000 G ")
+                            # had a time.sleep() here -
+                            print "Slow shift to vel mode"
+                            self.msg("MV VT=0 ADT=30 DT=30 G")
+                            time.sleep(5)
+                            print "Now stopping for real"
+                            self.stop_motor()
+                            self.enable_brake()
+                            print "And on to the next step"
+                            return True
+
             # variable speed tests:
             if vfunc:
-                new_vel=vfunc(self.read_cable_out())
+                new_vel=vfunc(self.read_cable_out(rpa=rpa))
                 if cmd_vel[0] != new_vel:
                     print "Updating velocity"
                     cmd_vel[0]=new_vel
