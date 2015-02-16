@@ -650,15 +650,14 @@ class AnimaticsWinch(object):
         self.poll()
         velocities = velocity or self.target_velocity
 
-        if callable(velocity):
-            vfunc=velocity
-        else:
-            vfunc=lambda x: velocity
+        if not callable(velocity):
+            velocity=lambda x: velocity
 
-        velocity=vfunc(self.read_cable_out())
+        # have to wrap it, so that stop_cond() can modify.
+        vbox=[velocity]
+        cmd_vel=[vbox[0](self.read_cable_out())]
 
-        cmd_vel=[velocity]
-        self.start_position_move(absol_m=absol_m,rel_m=rel_m,velocity=velocity,
+        self.start_position_move(absol_m=absol_m,rel_m=rel_m,velocity=cmd_vel[0],
                                  direc=direc,accel=accel,decel=decel)
         # time.sleep(0.5) # take care of this with elapsed below
         t_start = time.time()
@@ -684,7 +683,7 @@ class AnimaticsWinch(object):
                     print "SW(0) is ",repr(sw0)
                     self.status_report(sw0=sw0)
                 return True
-            if max_current is not None and (elapsed > 2.0):
+            if max_current is not None and (elapsed > 2.0) and (cmd_vel[0]>0):
                 # if the CTD is heavier, bobbing up and down
                 # will cause a spike in current to keep it from
                 # going too fast, but we only care about when
@@ -707,44 +706,45 @@ class AnimaticsWinch(object):
                         # not entirely sure how much of this incantation is
                         # required - 
                         self.release_brake()
-                        self.msg("OFF")
+                        self.msg("OFF") # redundant??
+
+                        # seems we need to be in torque mode in order
+                        # to make a smooth transition to velocity mode.
+                        print "Zero counter torque"
+                        self.msg("MT T=0 TS=250000 G ")
 
                         print "Free-wheeling for 3 seconds..."
-                        time.sleep(3.0)
-                        vel=self.read_motor_velocity()
-                        print "Free-wheel velocity is %.2f, commanded=%.2f"%(vel,cmd_vel[0])
-
-                        #if vel>0.25*cmd_vel[0]:
-                        #    print "Will try resuming down cast"
-
-
-                        # TODO: if after a few seconds of free-wheeling
-                        # the velocity was high enough, then resume the
-                        # trajectory.
-                        # if not, slowly bring it to zero velocity then
-                        # break out.
-                        if 1:
-                            # go into torque mode first?
-                            print "Zero counter torque"
-                            self.msg("MT T=0 TS=250000 G ")
-                            # had a time.sleep() here -
+                        for i in range(3):
+                            time.sleep(1.0)
+                            vel=self.read_motor_velocity()
+                            print "Free-wheel velocity is %.2f, commanded=%.2f"%(vel,cmd_vel[0])
+                            
+                            if vel>0.25*cmd_vel[0]:
+                                print "Will try resuming down cast"
+                                vel_winch=int(self.velocity_mps_to_winch(cmd_vel[0]))
+                                self.msg("MV AT=50 VT=%d G"%vel_winch)
+                                break
+                        else: 
+                            # override requested velocity to 0,
+                            # but drop back out to regular loop
+                            # to wait for end of trajectory.
                             print "Slow shift to vel mode"
                             self.msg("MV VT=0 ADT=30 DT=30 G")
-                            time.sleep(5)
-                            print "Now stopping for real"
-                            self.stop_motor()
-                            self.enable_brake()
-                            print "And on to the next step"
-                            return True
+                            vbox[0]=lambda x: 0
+                            cmd_vel[0]=0
+                            # print "Now stopping for real"
+                            # self.stop_motor()
+                            # self.enable_brake()
+                            # print "And on to the next step"
+                            # return True
 
             # variable speed tests:
-            if vfunc:
-                new_vel=vfunc(self.read_cable_out(rpa=rpa))
-                if cmd_vel[0] != new_vel:
-                    print "Updating velocity"
-                    cmd_vel[0]=new_vel
-                    vel_winch=int(self.velocity_mps_to_winch(new_vel))
-                    self.msg("VT=%d G"%vel_winch)
+            new_vel=vbox[0](self.read_cable_out(rpa=rpa))
+            if cmd_vel[0] != new_vel:
+                print "Updating velocity"
+                cmd_vel[0]=new_vel
+                vel_winch=int(self.velocity_mps_to_winch(new_vel))
+                self.msg("VT=%d G"%vel_winch)
             
             return False
         while not stop_cond():
