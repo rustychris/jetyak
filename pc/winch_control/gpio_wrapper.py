@@ -44,7 +44,7 @@ class SerialGPIOReal(object):
         self.last_signal_out = 1
         # pass
     def signal_cast_complete(self):
-        self.write(1,0)
+        self.write(self.gpio_xmit,0)
         self.last_signal_out = 0
     def read(self, chan):
         self.ser.flushInput()

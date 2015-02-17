@@ -717,12 +717,21 @@ class AnimaticsWinch(object):
                         for i in range(3):
                             time.sleep(1.0)
                             vel=self.read_motor_velocity()
+                            # TODO: should also see if we've reached
+                            # the intended position while free-wheeling.
                             print "Free-wheel velocity is %.2f, commanded=%.2f"%(vel,cmd_vel[0])
                             
                             if vel>0.25*cmd_vel[0]:
                                 print "Will try resuming down cast"
-                                vel_winch=int(self.velocity_mps_to_winch(cmd_vel[0]))
-                                self.msg("MV AT=50 VT=%d G"%vel_winch)
+                                
+                                self.start_position_move(absol_m=absol_m,rel_m=rel_m,
+                                                         velocity=cmd_vel[0],
+                                                         accel=50,decel=50)
+                                
+                                # This was no good - it needs to be a position
+                                # move.  
+                                # vel_winch=int(self.velocity_mps_to_winch(cmd_vel[0]))
+                                # self.msg("MV AT=50 VT=%d G"%vel_winch)
                                 break
                         else: 
                             # override requested velocity to 0,
