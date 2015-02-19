@@ -714,8 +714,10 @@ class AnimaticsWinch(object):
                         self.msg("MT T=0 TS=250000 G ")
 
                         print "Free-wheeling for 3 seconds..."
-                        for i in range(3):
-                            time.sleep(1.0)
+                        t_wait=3.0
+                        dt=0.1
+                        for i in range(int(t_wait/dt)):
+                            time.sleep(dt)
                             vel=self.read_motor_velocity()
                             # TODO: should also see if we've reached
                             # the intended position while free-wheeling.
@@ -727,6 +729,9 @@ class AnimaticsWinch(object):
                                 self.start_position_move(absol_m=absol_m,rel_m=rel_m,
                                                          velocity=cmd_vel[0],
                                                          accel=50,decel=50)
+                                # doesn't brake, just sets the brake-on-no-trajectory
+                                # flag.
+                                self.enable_brake()
                                 
                                 # This was no good - it needs to be a position
                                 # move.  
@@ -741,11 +746,8 @@ class AnimaticsWinch(object):
                             self.msg("MV VT=0 ADT=30 DT=30 G")
                             vbox[0]=lambda x: 0
                             cmd_vel[0]=0
-                            # print "Now stopping for real"
-                            # self.stop_motor()
-                            # self.enable_brake()
-                            # print "And on to the next step"
-                            # return True
+                            # go back to brake on no trajectory
+                            self.enable_brake()
 
             # variable speed tests:
             new_vel=vbox[0](self.read_cable_out(rpa=rpa))
