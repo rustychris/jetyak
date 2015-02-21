@@ -304,7 +304,7 @@ class CTD(object):
         self.state_values = [ ['Depth',lambda: "%.2f m"%self.monitor.maxDepth],
                               ['GPS velocity',lambda: "%.2f m/s"%self.monitor.velocity],
                               ['Cable out',lambda: "%.2f m"%self.winch.read_cable_out() ],
-                              ['Winch current',lambda: "%.0f mA?"%self.winch.read_motor_current()],
+                              ['Winch current',lambda: "%.0f mA"%self.winch.read_motor_current()],
                               ['Winch torque',lambda: "%.0f"%self.winch.read_motor_torque()],
                               ['Winch action',lambda: self.winch.async_action],
                               ['CTD action',lambda: self.async_action],
@@ -364,7 +364,7 @@ class CTD(object):
 
         add_float_config("Target velocity [m/s]", self.winch, "target_velocity", "%.2f")
         add_float_config('Spool radius [m]', self.winch,"spool_radius", "%.3f")
-        add_float_config('Full-in force [kg]',self.winch,"block_a_block_kg","%.2f")
+        add_float_config('Full-in force [~kg]',self.winch,"block_a_block_kg","%.2f")
         add_float_config('Zero tension current',self.winch,"deploy_slack_current","%.0f")
         add_float_config('Deploy slack torque',self.winch,"deploy_slack_torque","%.0f")
         add_float_config('Arm length [m]',self.winch,"arm_length","%.2f")
