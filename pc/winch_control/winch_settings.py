@@ -23,29 +23,38 @@ hummingbird_is_real = True
 winch_baud=9600
 winch_com_port="COM1"
 
-# and choose settings based on that    
-if location=='lab':
-    # windows-based laptop in the lab, winch only.
-    winch_com_port="COM1"
-    hummingbird_is_real = False # triggers testing setup
-    gpio_is_real = False
-elif location=='thistle':
-    # nothing is real.
-    winch_is_real = False
-    gpio_is_real= False
-    hummingbird_is_real=False
-elif location=='workmac':
-    winch_com_port="/dev/cu.usbserial-FTGUK02I"
-    gpio_is_real=False
-    hummingbird_is_real=False
-elif location=='jetyak':
-    winch_com_port="COM4" # jetyak
+def set_location(location):
+    global winch_com_port
+    global hummingbird_is_real
+    global gpio_is_real
+    global gpio_com_port
+    global humminbird_com_port
+    global winch_is_real
 
-    # hardware port is COM1, but if GPSGATE is running,
-    # repeats to 6,8,9,10
-    hummingbird_com_port='COM6'
-    gpio_com_port = 'COM10'
+    # and choose settings based on that    
+    if location=='lab':
+        # windows-based laptop in the lab, winch only.
+        winch_com_port="COM1"
+        hummingbird_is_real = False # triggers testing setup
+        gpio_is_real = False
+    elif location=='thistle':
+        # nothing is real.
+        winch_is_real = False
+        gpio_is_real= False
+        hummingbird_is_real=False
+    elif location=='workmac':
+        winch_com_port="/dev/cu.usbserial-FTGUK02I"
+        gpio_is_real=False
+        hummingbird_is_real=False
+    elif location=='jetyak':
+        winch_com_port="COM4" # jetyak
 
+        # hardware port is COM1, but if GPSGATE is running,
+        # repeats to 6,8,9,10
+        hummingbird_com_port='COM6'
+        gpio_com_port = 'COM10'
+
+set_location(location)
 #### logging
 
 # For now, send everything to file and stderr

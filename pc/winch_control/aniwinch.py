@@ -249,7 +249,12 @@ class AnimaticsWinch(object):
         # if SMI has run recently, motor might be in echo mode
         self.msg("ECHO_OFF ")
         # Query sample rate and version
-        srate,self.version = self.msg("RSP\r")[0].split('/')
+        rsp=self.msg("RSP\r")
+        if len(rsp)==0 or rsp[0]=="":
+            self.log.critical("Failed to read sample rate and version - motor disconnected?")
+            sys.exit(1)
+        srate,self.version = rsp[0].split('/')
+
         self.srate = int(srate)
         # very simple - expand as needed
         if self.version == '5.0.3.61':
@@ -440,14 +445,12 @@ class AnimaticsWinch(object):
         
     accel = 200
     ### synchronous/fast helper functions ###
-    def start_velocity_move(self, vel_meters_per_second):
+    def start_velocity_move(self, vel_meters_per_second,accel=None):
         self.log.info("velocity move = %.3f"%vel_meters_per_second)
         vel = self.velocity_mps_to_winch(vel_meters_per_second,clip=True)
 
-        if self.cmd_ver == 'old':
-            self.msg("ZS MV AT=%i VT=%i G "%(self.accel,vel) )
-        else:
-            self.msg("ZS MV ADT=%i VT=%i G "%(self.accel,vel) )
+        accel=accel or self.accel
+        self.msg("ZS MV ADT=%i VT=%i G "%(self.accel,vel) )
 
     def release_brake(self):
         if self.cmd_ver != 'old':
@@ -544,6 +547,8 @@ class AnimaticsWinch(object):
     def set_torque(self,val):
         self.cache_torque=(val,time.time())
     def set_cable_out(self,val):
+        if len(val)!=2:
+            raise Exception("set_cable_out() should get a tuple!")
         self.cache_cable_out=(val,time.time())
 
     def get_current(self,age=0.0):
@@ -561,11 +566,14 @@ class AnimaticsWinch(object):
         if t-self.cache_torque[1] > age:
             self.read_motor_torque()
         return self.cache_torque[0]
-    def get_cable_out(self,age=0.0):
+    def get_cable_out(self,age=0.0,extra=False):
         t=time.time()
         if t-self.cache_cable_out[1] > age:
             self.read_cable_out()
-        return self.cache_cable_out[1]
+        if extra:
+            return self.cache_cable_out[0]
+        else:
+            return self.cache_cable_out[0][0]
 
     def read_encoder_position(self,verb=5):
         if self.cmd_ver =='old':
@@ -659,11 +667,12 @@ class AnimaticsWinch(object):
             diff = float(rpa)
         if diff is not None:
             pos = self.position_winch_to_m(diff)
-            self.set_cable_out(pos)
+            revs=self.position_winch_to_revs(diff)
+
+            self.set_cable_out( (pos,revs) )
             if abs(pos) > 0.01:
                 self.log.debug('cable_out=%.2f'%pos)
             if extra:
-                revs=self.position_winch_to_revs(diff)
                 return pos,revs
             else:
                 return pos
@@ -714,7 +723,7 @@ class AnimaticsWinch(object):
         rel_m: or targert cable out relative to current position
         velocity: a speed in m/s. N.B. this is calculated based on the 
            full spool radius.
-           This can also be a function which takes the cable out and returns a velocity
+           This can also be a function which takes the cable out in m and returns a velocity
            in m/s.
 
         direc: +1 only move if target is farther out, -1 only move if target is closer in.
@@ -726,15 +735,19 @@ class AnimaticsWinch(object):
         """
         self.log.debug("top of complete_position_move")
         self.poll()
-        velocities = velocity or self.target_velocity
+        velocity = velocity or self.target_velocity
 
         if not callable(velocity):
-            velocity=lambda x: velocity
+            vel_func=lambda x: velocity
+        else:
+            vel_func=velocity
 
         # have to wrap it, so that stop_cond() can modify.
-        vbox=[velocity]
+        vbox=[vel_func]
         cmd_vel=[vbox[0](self.read_cable_out())]
 
+        print "vbox[0]: ",vbox[0]
+        print "cmd_vel[0]: ",cmd_vel[0]
         self.start_position_move(absol_m=absol_m,rel_m=rel_m,velocity=cmd_vel[0],
                                  direc=direc,accel=accel,decel=decel)
         # time.sleep(0.5) # take care of this with elapsed below
@@ -904,13 +917,12 @@ class AnimaticsWinch(object):
     def ctd_in_by_force(self):
         self.release_brake()
         self.start_force_move(-self.block_a_block_kg)
-        #time.sleep(1.0) # new motor is slower to ramp up
-        while self.read_motor_velocity(dt=0.1) < -0.005:
+        time.sleep(1.0) # new motor is slower to ramp up
+        while self.read_motor_velocity() < -0.005:
             self.poll()
         self.log.info("in_by_force: found stall")
         self.motor_stop()
-        if self.cmd_ver != 'old':
-            self.msg("BRKTRJ ")
+        self.enable_brake()
         self.log.info("stopped motor")
         # relieves tension to reduce power by servoing in place
         self.complete_position_move(rel_m=self.ease_from_block_a_block,block=True)
