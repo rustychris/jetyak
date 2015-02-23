@@ -387,6 +387,20 @@ class CTD(object):
                     pass
             add_gen_config(text,setter,getter)
 
+        def add_bool_config(text,obj,attr):
+            lab = Tkinter.Label(self.config,text=text)
+            ivar = Tkinter.IntVar()
+            val = Tkinter.Checkbutton(self.config,variable=ivar)
+            
+            ivar.set( int(bool(getattr(obj,attr))) )
+            def real_setter(*args):
+                v = ivar.get()
+                setattr(obj,attr,bool(int(v)))
+            ivar.trace('w', real_setter )
+            lab.grid(row=len(self.config_values),column=0)
+            val.grid(row=len(self.config_values),column=1)
+            self.config_values.append(ivar)
+
         add_float_config("Target velocity [m/s]", self.winch, "target_velocity", "%.2f")
         add_float_config('Inner radius [m]', self.winch,"spool_radius_inner", "%.4f")
         add_float_config('Outer radius [m]', self.winch,"spool_radius_outer", "%.4f")
@@ -403,6 +417,8 @@ class CTD(object):
         add_gen_config('Override depth',
                        self.set_depth_override_str,
                        self.get_depth_override_str)
+        
+        add_bool_config("Always reset?",self.winch,"reset_after_cast")
 
     def set_depth_override_str(self,v):
         v=v.strip()

@@ -207,11 +207,14 @@ class AnimaticsWinch(object):
     deploy_slack_torque = 15000
     
     # torque mode parameters:
-    block_a_block_kg = 9.0
+    block_a_block_kg = 7.0
+    reset_after_cast=False
 
     arm_length = 0.25 # distance from up to instrument barely mated to cage
     cage_length = 0.4 # distance from mated to clear of cage
     ease_from_block_a_block = 0.83 # how far 'up' is from when the winch torques out
+
+    max_wire_out=105.0 # [m]
 
     motor=None
     
@@ -406,7 +409,7 @@ class AnimaticsWinch(object):
         return vel
 
     def velocity_winch_to_mps(self,vel_winch,posn_m=0.0):
-        return vel_winch /self.velocity_mps_to_winch(1.0,posn_m=posn_m)
+        return float(vel_winch)/self.velocity_mps_to_winch(1.0,posn_m=posn_m)
 
     def position_winch_to_m(self,nondim):
         # old way:
@@ -512,10 +515,7 @@ class AnimaticsWinch(object):
         else:
             decel = int(decel)
 
-        if self.cmd_ver=='old':
-            cmd = "ZS MP AT=%d VT=%i PT=%i G " % (accel,vel, target_position)
-        else:
-            cmd = "ZS MP AT=%d DT=%d VT=%i PT=%i G "%(accel,decel,vel, target_position)
+        cmd = "ZS MP AT=%d DT=%d VT=%i PT=%i G "%(accel,decel,vel, target_position)
         self.msg(cmd)
 
     def stop_motor(self):
@@ -715,10 +715,11 @@ class AnimaticsWinch(object):
         
     ### Blocking or asynchronous, higher-level operations ###
     @async('move to position')
-    def complete_position_move(self, absol_m=None,rel_m=None,
-                               velocity=None,direc=0,accel=None,
-                               decel=None,
-                               max_current=None):
+    def complete_position_move(self, 
+                               absol_m=None,rel_m=None,
+                               velocity=None,direc=0,
+                               accel=None,decel=None,
+                               monitor_slack=True,max_pause=2.0):
         """ absol_m: the target, ending cable out in meter
         rel_m: or targert cable out relative to current position
         velocity: a speed in m/s. N.B. this is calculated based on the 
@@ -729,9 +730,13 @@ class AnimaticsWinch(object):
         direc: +1 only move if target is farther out, -1 only move if target is closer in.
                 0 move regardless
         accel: override default accel/decel
-        max_current: a slack current measure - if current exceeds this figure and
-          the torque is positive, assume that line has gone slack.  Needs some work.
 
+        monitor_slack: if True and the move is outwards, then make sure there
+         is always tension in the line.  This is accomplished by 
+         free-wheeling at the beginning, and whenever the drive torque and current
+         suggest that the motor is overhauling the line, revert to freewheel mode.
+        max_pause: when free-wheeling, if it doesn't free-wheel up to half the speed
+         in this time, then give up.
         """
         self.log.debug("top of complete_position_move")
         self.poll()
@@ -746,132 +751,241 @@ class AnimaticsWinch(object):
         vbox=[vel_func]
         cmd_vel=[vbox[0](self.read_cable_out())]
 
-        print "vbox[0]: ",vbox[0]
-        print "cmd_vel[0]: ",cmd_vel[0]
-        self.start_position_move(absol_m=absol_m,rel_m=rel_m,velocity=cmd_vel[0],
-                                 direc=direc,accel=accel,decel=decel)
-        # time.sleep(0.5) # take care of this with elapsed below
-        t_start = time.time()
-        
-        def stop_cond():
-            elapsed = time.time() - t_start
+        #####
 
-            # sw0 = int(self.msg("RW(0)\r",verb=5)[0])
-
-            # Read everything at once - too much overhead in individual calls
-            sw0,uia,rtrq,rpa=self.msg("RW(0)\rPRINT(UIA,#13)\rRTRQ\rRPA\r",verb=5)
-            sw0=int(sw0)
-
-            in_trajectory=sw0&4
-
-            if not in_trajectory:
-                self.log.info("position move - end on no trajectory flag after %fs"%(elapsed))
-                # to diagnose the stops, grab status words:
-                # clean this up
-                if sw0 not in (3073,3075,1,3): # this is status ready, motor off, limits enabled/disabled
-                    self.log.info("SW(0) is ",repr(sw0))
-                    self.status_report(sw0=sw0)
-                return True
-            if max_current is not None and (elapsed > 2.0) and (cmd_vel[0]>0):
-                # if the CTD is heavier, bobbing up and down
-                # will cause a spike in current to keep it from
-                # going too fast, but we only care about when
-                # the current is higher and torque is positive -
-                # it's having to work to push line out.
-                current = self.read_motor_current(uia=uia)
-                torque = self.read_motor_torque(rtrq=rtrq)
-                self.log.info("curr=%f    torq=%f"%(current,torque))
-                if current > max_current and \
-                    torque > self.deploy_slack_torque:
-                    # that torque threshold is hopefully going to cancel out
-                    # the times that it's bobbing around.
-                    self.log.warn("position move - abort on current=%f torq=%f"%(current,
-                                                                                 torque))
-                    if 0: # Try stopping more explicitly:
-                        self.stop_motor()
-                        # I don't think we have to wait here...
-                        return True
-                    else: # freewheel and resume?
-                        # not entirely sure how much of this incantation is
-                        # required - 
-                        self.release_brake()
-                        self.msg("OFF") # redundant??
-
-                        # seems we need to be in torque mode in order
-                        # to make a smooth transition to velocity mode.
-                        self.msg("MT T=0 TS=250000 G ")
-
-                        self.log.info("Free-wheeling for 3 seconds...")
-                        t_wait=3.0
-                        dt=0.1
-                        for i in range(int(t_wait/dt)):
-                            time.sleep(dt)
-                            vel=self.read_motor_velocity()
-                            # TODO: should also see if we've reached
-                            # the intended position while free-wheeling.
-                            self.log.info("Free-wheel velocity is %.2f, commanded=%.2f"%(vel,cmd_vel[0]))
-                            
-                            if vel>0.25*cmd_vel[0]:
-                                self.log.inf("Will try resuming down cast")
-                                
-                                self.start_position_move(absol_m=absol_m,rel_m=rel_m,
-                                                         velocity=cmd_vel[0],
-                                                         accel=100,decel=100)
-                                # doesn't brake, just sets the brake-on-no-trajectory
-                                # flag.
-                                self.enable_brake()
-                                
-                                # This was no good - it needs to be a position
-                                # move.  
-                                # vel_winch=int(self.velocity_mps_to_winch(cmd_vel[0]))
-                                # self.msg("MV AT=50 VT=%d G"%vel_winch)
-                                break
-                        else: 
-                            # override requested velocity to 0,
-                            # but drop back out to regular loop
-                            # to wait for end of trajectory.
-                            self.log.info("Slow shift to vel mode")
-                            self.msg("MV VT=0 ADT=30 DT=30 G")
-                            vbox[0]=lambda x: 0
-                            cmd_vel[0]=0
-                            # go back to brake on no trajectory
-                            self.enable_brake()
-
-            # variable speed tests:
-            new_vel=vbox[0](self.read_cable_out(rpa=rpa))
-            if cmd_vel[0] != new_vel:
-                self.log.debug("Updating velocity")
-                cmd_vel[0]=new_vel
-                vel_winch=int(self.velocity_mps_to_winch(new_vel))
-                self.msg("VT=%d G"%vel_winch)
+        # the start_position_move logic
+        # figure out 
+        if rel_m is not None:
+            present_m = self.read_cable_out()
+            absol_m = present_m + rel_m
             
-            return False
-        while not stop_cond():
-            self.poll()
+        if absol_m > self.max_wire_out:
+            self.log.warn("Requested wire out %f > max %f"%(absol_m,self.max_wire_out))
+            absol_m=self.max_wire_out
+
+        target_position = int( self.position_m_to_winch(absol_m) )
+        pos = self.read_cable_out()
+        if direc != 0:
+            if (direc < 0) == (pos < absol_m):
+                self.log.info("No move - direc=%d"%direc)
+                return
+        else:
+            # make direc reflect the way we're going
+            if pos<absol_m:
+                direc=1
+            else:
+                direc=-1
+        self.log.info("Commanded to move to cable length %s"%absol_m)
+        accel=accel or 100
+        decel=decel or 100
+
+        #vel = int( self.velocity_mps_to_winch(velocity) )
+
+
+        if direc<0:
+            # only worry about slack when reeling out
+            monitor_slack=False
+            
+        def do_servo(target_velocity=None):
+            target_velocity=target_velocity or vbox[0](self.read_cable_out())
+            cmd_vel[0] = target_velocity
+            vel=self.velocity_mps_to_winch(cmd_vel[0])
+            cmd = "MP AT=%d DT=%d VT=%i PT=%i G "%(accel,decel,vel,target_position)
+            self.msg(cmd)
+        
+        try:
+            if monitor_slack:
+                mode='free'
+                self.release_brake()
+                self.start_force_move(0.0)
+                self.log.info('Start free velocity move')
+            else:
+                mode='servo'
+                do_servo()
+                
+            # track how long it's been idle:
+            t_start=t_idle=time.time()
+
+            while 1:
+                # read the current status:
+                status=self.msg("RW(0)\rPRINT(VA,#13,UIA,#13,TRQ,#13)\rRPA\r",verb=5,nresp=5)
+                sw0,va,uia,rtrq,rpa=[int(s) for s in status]
+                in_trajectory=sw0&4
+
+                # update the target velocity based on the new position
+                cable_out=self.read_cable_out(rpa=rpa)
+                target_velocity=vbox[0](cable_out)
+
+                if mode=='free':
+                    # e.g. direc=1, going out, stop if rpa is greater than target_position
+                    if direc*(rpa-target_position)>=0:
+                        self.log.info("Free-wheeled to target_position.")
+                        break
+
+                    # has it free-wheeled up to speed?
+                    if rtrq!=0.0:
+                        self.log.info('Wait for true free-wheel')
+                        continue
+                    curr_vel=self.velocity_winch_to_mps(va)
+                    if curr_vel>0.25*target_velocity:
+                        self.log.info('Free-wheeled up to %.2f, switch to servo'%curr_vel)
+                        mode='servo'
+                        do_servo(target_velocity=target_velocity)
+                        continue
+                    elif time.time() - t_idle > max_pause:
+                        self.log.info('Idle too long.')
+                        break
+                    else:
+                        self.log.info("Free-wheeling at %f [%d], compared to %.2f"%(curr_vel,va,target_velocity))
+                elif mode=='servo':
+                    if not in_trajectory:
+                        elapsed=time.time() - t_start
+                        self.log.info("position move - end on no trajectory flag after %fs"%(elapsed))
+                        # to diagnose the stops, grab status words:
+                        # clean this up
+                        if sw0 not in (3073,3075,1,3): # this is status ready, motor off, limits enabled/disabled
+                            self.log.info("SW(0) is ",repr(sw0))
+                            self.status_report(sw0=sw0)
+                        break
+
+                    thresh=self.torque_thresh(spd_winch=va)
+                    # if it's working to go this fast, then revert to free-wheel
+                    # to avoid overhauling the line.
+                    if uia>self.slack_current_threshold and rtrq>thresh:
+                        self.log.info('Line appears slack')
+                        mode='free'
+                        self.msg('MT T=0 G ')
+                        t_idle=time.time()
+                        continue
+                    elif target_velocity != cmd_vel[0]:
+                        # update the commanded velocity
+                        do_servo(target_velocity=target_velocity)
+                    else:
+                        self.log.debug("VA: %7d  UIA: %7d [%d]  TRQ: %7d [%d]"%(va,uia,
+                                                                                self.slack_current_threshold,
+                                                                                rtrq,thresh)
+
+        finally:
+            self.stop()
+            self.enable_brake()
+
+        #######
+        
+
+        #  def stop_cond():
+        #      elapsed = time.time() - t_start
+        #  
+        #      # sw0 = int(self.msg("RW(0)\r",verb=5)[0])
+        #  
+        #      # Read everything at once - too much overhead in individual calls
+        #      sw0,uia,rtrq,rpa=self.msg("RW(0)\rPRINT(UIA,#13)\rRTRQ\rRPA\r",verb=5)
+        #      sw0=int(sw0)
+        #  
+        #      in_trajectory=sw0&4
+        #  
+        #      if not in_trajectory:
+        #          self.log.info("position move - end on no trajectory flag after %fs"%(elapsed))
+        #          # to diagnose the stops, grab status words:
+        #          # clean this up
+        #          if sw0 not in (3073,3075,1,3): # this is status ready, motor off, limits enabled/disabled
+        #              self.log.info("SW(0) is ",repr(sw0))
+        #              self.status_report(sw0=sw0)
+        #          return True
+        #      if max_current is not None and (elapsed > 2.0) and (cmd_vel[0]>0):
+        #          # if the CTD is heavier, bobbing up and down
+        #          # will cause a spike in current to keep it from
+        #          # going too fast, but we only care about when
+        #          # the current is higher and torque is positive -
+        #          # it's having to work to push line out.
+        #          current = self.read_motor_current(uia=uia)
+        #          torque = self.read_motor_torque(rtrq=rtrq)
+        #          self.log.info("curr=%f    torq=%f"%(current,torque))
+        #          if current > max_current and \
+        #              torque > self.deploy_slack_torque:
+        #              # that torque threshold is hopefully going to cancel out
+        #              # the times that it's bobbing around.
+        #              self.log.warn("position move - abort on current=%f torq=%f"%(current,
+        #                                                                           torque))
+        #              if 0: # Try stopping more explicitly:
+        #                  self.stop_motor()
+        #                  # I don't think we have to wait here...
+        #                  return True
+        #              else: # freewheel and resume?
+        #                  # not entirely sure how much of this incantation is
+        #                  # required - 
+        #                  self.release_brake()
+        #                  self.msg("OFF") # redundant??
+        #  
+        #                  # seems we need to be in torque mode in order
+        #                  # to make a smooth transition to velocity mode.
+        #                  self.msg("MT T=0 TS=250000 G ")
+        #  
+        #                  self.log.info("Free-wheeling for 3 seconds...")
+        #                  t_wait=3.0
+        #                  dt=0.1
+        #                  for i in range(int(t_wait/dt)):
+        #                      time.sleep(dt)
+        #                      vel=self.read_motor_velocity()
+        #                      # TODO: should also see if we've reached
+        #                      # the intended position while free-wheeling.
+        #                      self.log.info("Free-wheel velocity is %.2f, commanded=%.2f"%(vel,cmd_vel[0]))
+        #                      
+        #                      if vel>0.25*cmd_vel[0]:
+        #                          self.log.inf("Will try resuming down cast")
+        #                          
+        #                          self.start_position_move(absol_m=absol_m,rel_m=rel_m,
+        #                                                   velocity=cmd_vel[0],
+        #                                                   accel=100,decel=100)
+        #                          # doesn't brake, just sets the brake-on-no-trajectory
+        #                          # flag.
+        #                          self.enable_brake()
+        #                          
+        #                          # This was no good - it needs to be a position
+        #                          # move.  
+        #                          # vel_winch=int(self.velocity_mps_to_winch(cmd_vel[0]))
+        #                          # self.msg("MV AT=50 VT=%d G"%vel_winch)
+        #                          break
+        #                  else: 
+        #                      # override requested velocity to 0,
+        #                      # but drop back out to regular loop
+        #                      # to wait for end of trajectory.
+        #                      self.log.info("Slow shift to vel mode")
+        #                      self.msg("MV VT=0 ADT=30 DT=30 G")
+        #                      vbox[0]=lambda x: 0
+        #                      cmd_vel[0]=0
+        #                      # go back to brake on no trajectory
+        #                      self.enable_brake()
+        #  
+        #      # variable speed tests:
+        #      new_vel=vbox[0](self.read_cable_out(rpa=rpa))
+        #      if cmd_vel[0] != new_vel:
+        #          self.log.debug("Updating velocity")
+        #          cmd_vel[0]=new_vel
+        #          vel_winch=int(self.velocity_mps_to_winch(new_vel))
+        #          self.msg("VT=%d G"%vel_winch)
+        #      
+        #      return False
+        #  while not stop_cond():
+        #      self.poll()
+
+    def torque_thresh(self,spd_winch):
+        wire_out_coeffs=[  2.84593843e-02,   1.06744338e+03]
+        calc=wire_out_coeffs[0]*spd_winch + wire_out_coeffs[1]
+        return max(500,calc)
 
     @async('ctd out')
     def ctd_out(self, max_depth):
         self.log.debug("ctd_out start")
-        if 0: # old, discrete steps approach:
-            self.complete_position_move(absol_m=self.arm_length+self.cage_length,
-                                        velocity=0.3*self.target_velocity,block=True,
-                                        direc=1)
-            self.log.debug("ctd_out: second move")
-            self.complete_position_move(absol_m=max_depth+self.arm_length+self.cage_length,block=True,
-                                        direc=1,accel=80,
-                                        max_current=self.deploy_slack_current)
-            self.log.debug("ctd_out end")
-        else:
-            def vfunc(cable_out):
-                if cable_out<self.arm_length+self.cage_length:
-                    return 0.3*self.target_velocity
-                else:
-                    return self.target_velocity
-            self.complete_position_move(absol_m=max_depth+self.arm_length+self.cage_length,
-                                        block=True,
-                                        direc=1,accel=80,
-                                        max_current=self.deploy_slack_current,
-                                        velocity=vfunc)
+        def vfunc(cable_out):
+            if cable_out<self.arm_length+self.cage_length:
+                return 0.3*self.target_velocity
+            else:
+                return self.target_velocity
+        self.complete_position_move(absol_m=max_depth+self.arm_length+self.cage_length,
+                                    block=True,
+                                    direc=1,accel=80,
+                                    monitor_slack=True,
+                                    velocity=vfunc)
     # pull winch back in, until we're back at the original position.
     @async('ctd in')
     def ctd_in(self):
@@ -903,6 +1017,10 @@ class AnimaticsWinch(object):
     def ctd_cast(self,max_depth):
         self.ctd_out(max_depth,block=True)
         self.ctd_in(block=True)
+        if self.reset_after_cast:
+            # TODO: might want to have ctd_in not quite bring it
+            # in all the way?
+            self.ctd_in_reset(block=True)
 
     reset_strategy = 'force' # 'current'
     @async('ctd in reset')
