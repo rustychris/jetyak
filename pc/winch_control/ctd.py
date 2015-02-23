@@ -22,6 +22,8 @@ class CTD(object):
     depth_override=None
 
     def __init__(self):
+        self.log = logging.getLogger('main')
+
         self.lock = threading.Lock()
         self.thread = None
         self.abort_async = False
@@ -29,10 +31,6 @@ class CTD(object):
         
         self.monitor = HumminbirdMonitor()
         self.winch = aniwinch.AnimaticsWinch()
-        self.init_logger()
-
-    def init_logger(self):
-        self.log = logging.getLogger('ctd')
         
     @async('cast on gpio')
     def cast_on_gpio(self):
@@ -448,14 +446,9 @@ class CTD(object):
         
         sys.exit()
     
+
 if __name__ == '__main__':
     ctd = CTD()
     ctd.gui()
     
 
-# TODO
-#  verify that the gpio.write is properly stopping the thrust
-#  add option to disable hardware mode
-#  etc.etc.
-#  update config values from GUI - subclass??
-#  joystick interface

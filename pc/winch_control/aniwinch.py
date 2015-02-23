@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import sys
 import math
 import serial
 import time
@@ -42,7 +43,7 @@ class FakeAnimatics(object):
         
     def read(self):
         if len(self.buff) == 0:
-            print "[fake] read past end of buffer"
+            # print "[fake] read past end of buffer"
             time.sleep(1)
             return ""
         else:
@@ -67,7 +68,7 @@ class FakeAnimatics(object):
 
                 getattr(self,cmd)(*args)
     def close(self):
-        print "closing"
+        pass
     def update_position(self):
         if self.traj_fn is not None:
             self.traj_fn(time.time())        
@@ -145,8 +146,20 @@ class FakeAnimatics(object):
         """ report actual position error """
         self.buff+="0\r"
     def PRINT(self,*args):
-        print "PRINT(",args,")"
-        self.buff+="blah\r"
+        resp=[]
+        for arg in args:
+            if arg=='VA':
+                val="0" # velocity actual
+            elif arg=='#13':
+                val="\r"
+            elif arg=="PA":
+                val="0" # position actual
+            else:
+                val="n/a"
+                self.log.warn("Don't know how to take %s"%arg)
+            resp.append(val)
+        resp="".join(resp)
+        self.buff+=resp
 
 from async import async,OperationAborted
             
@@ -199,6 +212,8 @@ class AnimaticsWinch(object):
     arm_length = 0.25 # distance from up to instrument barely mated to cage
     cage_length = 0.4 # distance from mated to clear of cage
     ease_from_block_a_block = 0.83 # how far 'up' is from when the winch torques out
+
+    motor=None
     
     def __init__(self,port=None):
         port=port or winch_settings.winch_com_port
@@ -212,19 +227,22 @@ class AnimaticsWinch(object):
         # threads don't have to register here
         self.thread = None
 
-        self.log = logging.getLogger('winch')
-        
+        self.log = logging.getLogger('wnch')
+
         self.init_motor(port)
 
         # parameters to update during polling:
-        self.monitor = dict(position_m=None,current_ma=None,volts=None)
         self.abort_async = False
 
     def init_motor(self,port):
         if winch_settings.winch_is_real:
-            self.motor = serial.Serial(port,
-                                       winch_settings.winch_baud,
-                                       timeout=1)
+            try:
+                self.motor = serial.Serial(port,
+                                           winch_settings.winch_baud,
+                                           timeout=1)
+            except OSError as exc:
+                self.log.critical("Failed to open serial port to winch")
+                sys.exit(1)
         else:
             self.motor = FakeAnimatics()
             
@@ -248,7 +266,8 @@ class AnimaticsWinch(object):
         # Default seems to be 1000, which has problems
         # with higher winch speeds
         self.msg('EL=-1 ')
-        print "Set error limit to ",self.msg("REL\r")
+        REL=self.msg("REL\r")[0]
+        self.log.info("Set error limit to %s"%REL)
         self.set_max_power_fraction(1.0)
         self.reset_encoder_position()
 
@@ -272,7 +291,7 @@ class AnimaticsWinch(object):
         if nresp<0:
             nresp = out.count("\r")
         if verb<3:
-            print "=>%s"%(repr(out))
+            self.log.debug("=>%s"%(repr(out)))
         with self.lock:
             self.motor.write(out)
             responses = [self.my_readline() for n in range(nresp)]
@@ -355,12 +374,20 @@ class AnimaticsWinch(object):
     def force_winch_to_kg(self,nondim):
         return nondim / self.force_kg_to_winch(1.0)
     
-    def velocity_mps_to_winch(self,vel_meters_per_second,clip=True):
+    def velocity_mps_to_winch(self,vel_meters_per_second,clip=True,posn_m=0.0):
+        """ take a wire speed in m/s to a winch non-dimensional
+        velocity setting.  Assumes full spool.
+
+        posn_m: evaluate velocity at the given amount of wire out.  This is NOT 
+         implemented!
+        """
         # the numbers below are from the animatics users guide (5.23, page 22)
         # VT = velocity * ((counts per rev) / (sample rate)) * 65536
         # velocity above is in revolutions per second
         # counts per rev is 4000, sample rate is 8000, so the
         # multiplier is 32768.
+        if posn_m!=0.0:
+            raise Exception("Not implemented!")
         
         circumference = self.spool_radius_outer * 2 * math.pi
         rps = vel_meters_per_second / circumference
@@ -373,8 +400,8 @@ class AnimaticsWinch(object):
                 vel=-self.vt_max
         return vel
 
-    def velocity_winch_to_mps(self,vel_winch):
-        return vel_winch /self.velocity_mps_to_winch(1.0)
+    def velocity_winch_to_mps(self,vel_winch,posn_m=0.0):
+        return vel_winch /self.velocity_mps_to_winch(1.0,posn_m=posn_m)
 
     def position_winch_to_m(self,nondim):
         # old way:
@@ -440,7 +467,6 @@ class AnimaticsWinch(object):
         self.motor_stop()
         T = int(self.force_kg_to_winch(kg))
         self.log.info("Will run force mode with torque of %s"%T)
-        print "Force mode, torque=",T
         if self.cmd_ver =='old':
             self.msg('MT ')
             self.msg("TS=65536 ")
@@ -449,7 +475,7 @@ class AnimaticsWinch(object):
             self.msg('ZS MT ')
             self.msg("T=%i "%T)
             self.msg("TS=250000 G ")
-        print "Done initiating force move"
+        self.log.debug("Done initiating force move")
         
     def start_position_move(self, absol_m=None,rel_m=None,velocity=None,direc=0,accel=None,
                             decel=None):
@@ -500,6 +526,47 @@ class AnimaticsWinch(object):
     def stop(self):
         self.stop_motor()
 
+    # state variables which should be cached and when it's not necessary
+    # to have precise data:
+    # current
+    # torque
+    # velocity
+    # cable_out
+    cache_current=(0,0)
+    cache_torque=(0,0)
+    cache_velocity=(0,0)
+    cache_cable_out=(0,0)
+
+    def set_current(self,val):
+        self.cache_current=(val,time.time())
+    def set_velocity(self,val):
+        self.cache_velocity=(val,time.time())
+    def set_torque(self,val):
+        self.cache_torque=(val,time.time())
+    def set_cable_out(self,val):
+        self.cache_cable_out=(val,time.time())
+
+    def get_current(self,age=0.0):
+        t=time.time()
+        if t-self.cache_current[1] > age:
+            self.read_motor_current()
+        return self.cache_current[0]
+    def get_velocity(self,age=0.0):
+        t=time.time()
+        if t-self.cache_velocity[1] > age:
+            self.read_motor_velocity()
+        return self.cache_velocity[0]
+    def get_torque(self,age=0.0):
+        t=time.time()
+        if t-self.cache_torque[1] > age:
+            self.read_motor_torque()
+        return self.cache_torque[0]
+    def get_cable_out(self,age=0.0):
+        t=time.time()
+        if t-self.cache_cable_out[1] > age:
+            self.read_cable_out()
+        return self.cache_cable_out[1]
+
     def read_encoder_position(self,verb=5):
         if self.cmd_ver =='old':
             line, = self.msg("RP\r",verb=verb) 
@@ -508,34 +575,42 @@ class AnimaticsWinch(object):
         try:
             return float(line)
         except ValueError:
-            print "Failed to parse encoder position '%s'"%line
+            self.log.warn("Failed to parse encoder position '%s'"%line)
             return None
 
     def read_motor_current(self,uia=None,verb=5):
         if uia is None:
             uia, = self.msg("PRINT(UIA,#13)\r",verb=verb)
         curr = float(uia)
-        self.log.info("current=%f"%curr)
+        self.log.debug("current=%f"%curr)
+        self.set_current(curr)
         return curr
 
     def read_motor_torque(self,rtrq=None,verb=5):
         if rtrq is None:
             rtrq, = self.msg("RTRQ\r",verb=verb)
         trq = float(rtrq)
-        self.log.info("torque=%f"%trq)
+        self.log.debug("torque=%f"%trq)
+        self.set_torque(trq)
         return trq
-        
-    def read_motor_velocity(self,dt=1.0,verb=5):
+
+    def read_motor_velocity(self,dt=1.0,full_spool=True,verb=5):
         if 1: # try builtin measurement:
             VA,counts0=[float(s) for s in self.msg("PRINT(VA,#13,PA,#13)\r",nresp=2,verb=verb)]
+            if full_spool:
+                # pretend this is the velocity for when the spool is full
+                counts0=0
+
             # that will be in encoder counts per PID sample * 65536
             # pid sample rate
             counts1=counts0 + (VA*self.srate/65536)
+
             posn0=self.position_winch_to_m(counts0)
             posn1=self.position_winch_to_m(counts1)
             # Not sure where the 0.5 is coming from - but at least this gets it to
             # match the commanded velocity.
-            return 0.5*(posn1 - posn0)
+            vel=0.5*(posn1 - posn0)
+            return vel
         else:
             posns = []
             clks = []
@@ -552,12 +627,14 @@ class AnimaticsWinch(object):
                     time.sleep(dt)
 
             # not sure why the factor of 4 is needed, but it is.
-            return 4*(posns[1] - posns[0])/(clks[1] - clks[0])
+            vel=4*(posns[1] - posns[0])/(clks[1] - clks[0])
+        self.set_velocity(vel)
+        return vel
 
     def status_report(self,sw0=None):
         if sw0 is None:
             sw0 = int(self.msg("RW(0)\r")[0])
-        print "--- Status ---"
+        self.log.info("--- Status ---")
         for i,name in enumerate(['ready','motor_off','trajectory',
                                  'bus_volt_fault','peak_overcurrent',
                                  'temp_fault','pos_fault','vel_limit',
@@ -568,10 +645,10 @@ class AnimaticsWinch(object):
             val=(1<<i)&sw0
             if val==0:
                 val=""
-            print "%16s: %s"%(name,val)
+            self.log.info("%16s: %s"%(name,val))
         if sw0 & 64:
-            print "Actual position error: ",self.msg("REA\r")[0]
-            print "Or is it",self.msg("PRINT(EA,#13)\r")[0]
+            self.log.warn("Actual position error: ",self.msg("REA\r")[0])
+            self.log.warn("Or is it",self.msg("PRINT(EA,#13)\r")[0])
             # print " Be: ",self.msg("PRINT(Be,#13)[0]\r")
         print "---"
 
@@ -582,6 +659,7 @@ class AnimaticsWinch(object):
             diff = float(rpa)
         if diff is not None:
             pos = self.position_winch_to_m(diff)
+            self.set_cable_out(pos)
             if abs(pos) > 0.01:
                 self.log.debug('cable_out=%.2f'%pos)
             if extra:
@@ -663,8 +741,6 @@ class AnimaticsWinch(object):
         t_start = time.time()
         
         def stop_cond():
-            # used to stop on velocity - 
-            # vel = abs(self.read_motor_velocity(dt=0.1))
             elapsed = time.time() - t_start
 
             # sw0 = int(self.msg("RW(0)\r",verb=5)[0])
@@ -676,11 +752,11 @@ class AnimaticsWinch(object):
             in_trajectory=sw0&4
 
             if not in_trajectory:
-                print "position move - end on no trajectory flag after %fs"%(elapsed)
+                self.log.info("position move - end on no trajectory flag after %fs"%(elapsed))
                 # to diagnose the stops, grab status words:
                 # clean this up
                 if sw0 not in (3073,3075,1,3): # this is status ready, motor off, limits enabled/disabled
-                    print "SW(0) is ",repr(sw0)
+                    self.log.info("SW(0) is ",repr(sw0))
                     self.status_report(sw0=sw0)
                 return True
             if max_current is not None and (elapsed > 2.0) and (cmd_vel[0]>0):
@@ -691,13 +767,13 @@ class AnimaticsWinch(object):
                 # it's having to work to push line out.
                 current = self.read_motor_current(uia=uia)
                 torque = self.read_motor_torque(rtrq=rtrq)
-                print "curr=%f    torq=%f"%(current,torque)
+                self.log.info("curr=%f    torq=%f"%(current,torque))
                 if current > max_current and \
                     torque > self.deploy_slack_torque:
                     # that torque threshold is hopefully going to cancel out
                     # the times that it's bobbing around.
-                    print "position move - abort on current=%f torq=%f"%(current,
-                                                                         torque)
+                    self.log.warn("position move - abort on current=%f torq=%f"%(current,
+                                                                                 torque))
                     if 0: # Try stopping more explicitly:
                         self.stop_motor()
                         # I don't think we have to wait here...
@@ -710,10 +786,9 @@ class AnimaticsWinch(object):
 
                         # seems we need to be in torque mode in order
                         # to make a smooth transition to velocity mode.
-                        print "Zero counter torque"
                         self.msg("MT T=0 TS=250000 G ")
 
-                        print "Free-wheeling for 3 seconds..."
+                        self.log.info("Free-wheeling for 3 seconds...")
                         t_wait=3.0
                         dt=0.1
                         for i in range(int(t_wait/dt)):
@@ -721,14 +796,14 @@ class AnimaticsWinch(object):
                             vel=self.read_motor_velocity()
                             # TODO: should also see if we've reached
                             # the intended position while free-wheeling.
-                            print "Free-wheel velocity is %.2f, commanded=%.2f"%(vel,cmd_vel[0])
+                            self.log.info("Free-wheel velocity is %.2f, commanded=%.2f"%(vel,cmd_vel[0]))
                             
                             if vel>0.25*cmd_vel[0]:
-                                print "Will try resuming down cast"
+                                self.log.inf("Will try resuming down cast")
                                 
                                 self.start_position_move(absol_m=absol_m,rel_m=rel_m,
                                                          velocity=cmd_vel[0],
-                                                         accel=50,decel=50)
+                                                         accel=100,decel=100)
                                 # doesn't brake, just sets the brake-on-no-trajectory
                                 # flag.
                                 self.enable_brake()
@@ -742,7 +817,7 @@ class AnimaticsWinch(object):
                             # override requested velocity to 0,
                             # but drop back out to regular loop
                             # to wait for end of trajectory.
-                            print "Slow shift to vel mode"
+                            self.log.info("Slow shift to vel mode")
                             self.msg("MV VT=0 ADT=30 DT=30 G")
                             vbox[0]=lambda x: 0
                             cmd_vel[0]=0
@@ -752,7 +827,7 @@ class AnimaticsWinch(object):
             # variable speed tests:
             new_vel=vbox[0](self.read_cable_out(rpa=rpa))
             if cmd_vel[0] != new_vel:
-                print "Updating velocity"
+                self.log.debug("Updating velocity")
                 cmd_vel[0]=new_vel
                 vel_winch=int(self.velocity_mps_to_winch(new_vel))
                 self.msg("VT=%d G"%vel_winch)
@@ -849,15 +924,15 @@ class AnimaticsWinch(object):
         been used in a little while.
         """
         motor_current = self.read_motor_current()
-        print 'cable out %5.1f, e = %6.0f, i = %4.1f, max = %4.1f' % \
-          (self.read_cable_out(), self.read_encoder_position(),
-           motor_current, self.stressed_current_threshold)
+        self.log.info('cable out %5.1f, e = %6.0f, i = %4.1f, max = %4.1f' % \
+                      (self.read_cable_out(), self.read_encoder_position(),
+                       motor_current, self.stressed_current_threshold))
         self.start_velocity_move(-self.target_velocity * 0.5)
         
         while motor_current < self.stressed_current_threshold:
             time.sleep(0.2)
             motor_current = self.read_motor_current()
-            print 'cable out %5.1f, enc = %6.0f, current = %4.1f, max = %4.1f' %\
-              (self.read_cable_out(), self.read_encoder_position(),
-               motor_current, self.stressed_current_threshold)
+            self.log.info('cable out %5.1f, enc = %6.0f, current = %4.1f, max = %4.1f' %\
+                          (self.read_cable_out(), self.read_encoder_position(),
+                           motor_current, self.stressed_current_threshold))
         self.stop_motor()
