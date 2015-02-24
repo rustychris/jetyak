@@ -701,14 +701,7 @@ class AnimaticsWinch(object):
             else:
                 exc = OperationAborted(cleanup=False)
             raise exc
-        # I don't think this is being used any more, and just slows
-        # down the loop.
 
-        # for k in self.monitor.keys():
-        #     if k=='position_m':
-        #         self.monitor[k] = self.read_cable_out(rpa=rpa)
-        #     elif k=='current_ma':
-        #         self.monitor[k] = self.read_motor_current(uia=uia)
     def handle_abort(self):
         self.log.info("handle_abort: stopping motor on abort")
         self.motor_stop()
@@ -807,6 +800,8 @@ class AnimaticsWinch(object):
             t_start=t_idle=time.time()
 
             while 1:
+                self.poll() # check for abort
+
                 # read the current status:
                 status=self.msg("RW(0)\rPRINT(VA,#13,UIA,#13,TRQ,#13)\rRPA\r",verb=5,nresp=5)
                 sw0,va,uia,rtrq,rpa=[int(s) for s in status]
@@ -863,11 +858,12 @@ class AnimaticsWinch(object):
                     else:
                         self.log.debug("VA: %7d  UIA: %7d [%d]  TRQ: %7d [%d]"%(va,uia,
                                                                                 self.slack_current_threshold,
-                                                                                rtrq,thresh)
+                                                                                rtrq,thresh))
 
         finally:
             self.stop()
             self.enable_brake()
+                                       
 
         #######
         
