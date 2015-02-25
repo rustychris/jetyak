@@ -175,7 +175,6 @@ TODO: if it gets a position fault on return, needs a better fallback -
 TODO: it's overshooting on reel out after resetting. Not a big problem, but 
   weird.
 
-
 TESTING: 
   With no CTD, just acting against springs, needs at least 10kg to reset frame.
   With CTD, 20kg works okay.
@@ -187,3 +186,4 @@ TESTING:
  
 
  
+Set up bare repo on mac: see google doc for details.
