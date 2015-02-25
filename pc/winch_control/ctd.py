@@ -19,7 +19,8 @@ import logging
 
 class CTD(object):
     towyo_factor=1.5
-    
+    depth_override=None
+
     def __init__(self):
         self.lock = threading.Lock()
         self.thread = None
@@ -51,9 +52,14 @@ class CTD(object):
             raise
         except Exception,exc:
             self.log.error("while gpio casting:" + str(exc))
-    
+
+    def depth_for_cast(self):
+        if self.depth_override is not None:
+            return self.depth_override
+        else:
+            return self.monitor.maxDepth
     def towyo_depth(self):
-        return self.monitor.maxDepth * self.towyo_factor 
+        return self.depth_for_cast() * self.towyo_factor 
             
     @async('tow-yo on gpio')
     def towyo_on_gpio(self):
@@ -145,7 +151,7 @@ class CTD(object):
         def on_complete(arg):
             self.waiting -= 1
             
-        self.winch.ctd_cast(self.monitor.maxDepth,
+        self.winch.ctd_cast(self.depth_for_cast(),
                             block=False,callback=on_complete) 
         while self.waiting >0:
             self.poll()
@@ -208,12 +214,14 @@ class CTD(object):
         self.towyo(block=False)
         
     def start_cast(self):
-        self.log.info('manual cast out %s' % self.monitor.maxDepth)
-        self.winch.ctd_cast(self.monitor.maxDepth)
+        d=self.depth_for_cast()
+        self.log.info('manual cast out %s' % d)
+        self.winch.ctd_cast(d)
 
     def manual_cast(self):
         self.log.info('manual cast')
-        self.winch.ctd_cast(self.monitor.maxDepth,block=False,callback=self.manual_cast_complete) # testing
+        self.winch.ctd_cast(self.depth_for_cast(),block=False,callback=self.manual_cast_complete)
+
     def manual_cast_complete(self,*args):
         self.log.info("Manual cast is complete")
 
@@ -236,28 +244,36 @@ class CTD(object):
         self.winch.abort()
         self.winch.stop_motor()
 
+    def print_status(self):
+        self.winch.status_report()
+
     update_rate_ms = 200
     
     def periodic_update(self):
         for text,thunk,str_var in self.state_values:
-            str_var.set(thunk())
+            try:
+                str_var.set(thunk())
+            except Exception as exc:
+                print exc
         
         self.top.after(self.update_rate_ms,self.periodic_update)
         
     def gui_init_actions(self):
         buttons = []
-        for text,cmd in [ ('Start GPIO-triggered single-cast mode',self.enable_hw_trig_cast),
-                          ('Start GPIO-triggered tow-yo',self.enable_hw_trig_towyo),
-                          # ('Enable Speed-based CTD mode', self.enable),
+        for text,cmd in [ ('STOP WINCH',self.stop_now),
                           ('Manual CTD cast now',self.manual_cast),
                           ('Tow-yo now',self.enable_towyo),
+                          ('Set current position as top',self.reset_here),
+                          ('Recover and reset CTD',self.recover_reset),
+                          ('Recover CTD',self.recover),
+
+                          ('Start GPIO-triggered single-cast mode',self.enable_hw_trig_cast),
+                          ('Start GPIO-triggered tow-yo',self.enable_hw_trig_towyo),
+                          # ('Enable Speed-based CTD mode', self.enable),
                           ('Force enable autopilot via GPIO',self.force_enable_gpio),
                           ('Force disable autopilot via GPIO',self.force_disable_gpio),
-                          ('Recover CTD',self.recover),
-                          ('Recover and reset CTD',self.recover_reset),
-                          ('Set current position as top',self.reset_here),
-                          ('STOP WINCH',self.stop_now),
-                          ('Stop automated casts',self.stop_auto) ]:
+                          ('Stop automated casts',self.stop_auto),
+                          ('Print status info to console',self.print_status) ]:
             buttons.append( Tkinter.Button(self.actions,text=text,command=cmd) )
         for btn in buttons:
             btn.pack(side=Tkinter.TOP,fill='x')
@@ -265,12 +281,14 @@ class CTD(object):
         # And the slider
         self.scale_var = Tkinter.DoubleVar()
         self.scale = Tkinter.Scale(self.actions,command=self.scale_changed,
-                                   from_=-.50, to=0.5, resolution=0.01,
+                                   from_=-.450, to=0.45, resolution=0.01,
                                    orient=Tkinter.HORIZONTAL,
                                    variable = self.scale_var,
                                    label="Run at speed:")
         # go back to zero on mouse up
-        self.scale.bind('<ButtonRelease>',lambda *x: (self.scale_var.set(0.0),self.scale_changed(0.0)) )
+        # self.scale.bind('<ButtonRelease>',lambda *x: (self.scale_var.set(0.0),self.scale_changed(0.0)) )
+        self.scale.bind('<Shift-ButtonRelease>',self.slider_nostop)
+        self.scale.bind('<ButtonRelease>',self.slider_stop)
         self.scale.pack(side=Tkinter.TOP,fill='x')
 
         # And a torque slider
@@ -287,6 +305,12 @@ class CTD(object):
     def scale_changed(self,new_value):
         self.winch.start_velocity_move(self.scale_var.get())
 
+    def slider_nostop(self,evt):
+        print "NOT STOPPING!"
+    def slider_stop(self,evt):
+        self.scale_var.set(0.0)
+        self.scale_changed(0.0)
+
     def tq_start(self,evt):
         print "Releasing brake"
         self.winch.release_brake()
@@ -295,6 +319,8 @@ class CTD(object):
         print "End torque mode"
         self.winch.motor_stop()
         self.tq_scale_var.set(0.0)
+        self.winch.enable_brake()
+
     def tq_scale_changed(self,new_value):
         force_kg=self.tq_scale_var.get()
         self.winch.start_force_move(force_kg)
@@ -303,8 +329,9 @@ class CTD(object):
         # a list of parameters to update periodically
         self.state_values = [ ['Depth',lambda: "%.2f m"%self.monitor.maxDepth],
                               ['GPS velocity',lambda: "%.2f m/s"%self.monitor.velocity],
-                              ['Cable out',lambda: "%.2f m"%self.winch.read_cable_out() ],
-                              ['Winch current',lambda: "%.0f mA"%self.winch.read_motor_current()],
+                              ['Cable out',lambda: "%.2f m/%.2frev"%self.winch.read_cable_out(extra=True) ],
+                              ['Cable speed',lambda: "%.2f m/s"%self.winch.read_motor_velocity() ],
+                              ['Winch current',lambda: "%.0f mA?"%self.winch.read_motor_current()],
                               ['Winch torque',lambda: "%.0f"%self.winch.read_motor_torque()],
                               ['Winch action',lambda: self.winch.async_action],
                               ['CTD action',lambda: self.async_action],
@@ -363,8 +390,9 @@ class CTD(object):
             add_gen_config(text,setter,getter)
 
         add_float_config("Target velocity [m/s]", self.winch, "target_velocity", "%.2f")
-        add_float_config('Spool radius [m]', self.winch,"spool_radius", "%.3f")
-        add_float_config('Full-in force [~kg]',self.winch,"block_a_block_kg","%.2f")
+        add_float_config('Inner radius [m]', self.winch,"spool_radius_inner", "%.4f")
+        add_float_config('Outer radius [m]', self.winch,"spool_radius_outer", "%.4f")
+        add_float_config('Full-in force [kg]',self.winch,"block_a_block_kg","%.2f")
         add_float_config('Zero tension current',self.winch,"deploy_slack_current","%.0f")
         add_float_config('Deploy slack torque',self.winch,"deploy_slack_torque","%.0f")
         add_float_config('Arm length [m]',self.winch,"arm_length","%.2f")
@@ -374,6 +402,24 @@ class CTD(object):
         add_gen_config('Max power fraction',
                        lambda v: self.winch.set_max_power_fraction(float(v)),
                        lambda: "%.2f"%self.winch.power_fraction)
+        add_gen_config('Override depth',
+                       self.set_depth_override_str,
+                       self.get_depth_override_str)
+
+    def set_depth_override_str(self,v):
+        v=v.strip()
+        if v=="":
+            self.depth_override=None
+        else:
+            try:
+                self.depth_override=float(v)
+            except ValueError:
+                pass
+    def get_depth_override_str(self):
+        if self.depth_override is None:
+            return ""
+        else:
+            return "%.2f"%self.depth_override
         
     def gui(self):
         self.top = top = Tkinter.Tk()

@@ -9,18 +9,35 @@ to look for, rather than waiting for a timeout.
 """
 
 import serial,time
+import sys
 
-port="COM1"
-ser = serial.Serial(port, 19200, timeout=1)
+if sys.platform=='darwin':
+    # port="/dev/cu.usbserial"
+    port="/dev/cu.usbserial-FTGUK02I"
+elif sys.platform=='windows':
+    port="COM1"
 
-ser.write("RVA\r")   # maybe RPA instead for newer firmware?
-while 1:
-    t = time.time()
-    char = ser.read(1)
-    elapsed = time.time() - t
-    print "[%5ims] %s"%(elapsed*1000,repr(char))
-    if char == '':
-        break
-    
-ser.close()
 
+for speed in [9600]:
+    print "-"*20,speed,"-"*20
+    try:
+        ser = serial.Serial(port, speed, timeout=0.5)
+        ser.write("\r")
+        ser.write("RSP\r")   # maybe RPA instead for newer firmware?
+        ser.write("PRINT(VA,#13,PA,#13)\r") 
+        ser.write("RPA\r")   # maybe RPA instead for newer firmware?
+        while 1:
+            t = time.time()
+            char = ser.read(1)
+            elapsed = time.time() - t
+            #print "[%5ims] %s"%(elapsed*1000,repr(char))
+            if char=="\r":
+                sys.stdout.write("%s\n"%str(char))
+            sys.stdout.write(char)
+            sys.stdout.flush()
+            if char == '':
+                break
+        ser.close()
+    except IOError:
+        ser.close()
+        

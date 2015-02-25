@@ -76,3 +76,103 @@ Async:
 TODO: have ctd.py log the NMEA strings, as the winriver log is
   buggy, and if the humminbird is shutdown unexpectedly it can
   corrupt it's internal log.
+
+--------------------------------------------------------------------------------
+
+Why does it sometimes get a current fault after a long spooling?
+
+ possibly because we're requesting a velocity above it's max.  
+ Seems that 0.44m/s (with the existing geometry settings) is
+ what it reports, even when commanded to go 0.5.
+ At the end of a long move at a velocity higher than supported,
+ it probably tries some correction and faults.
+
+# this is for 0.5m/s - tends to fault.
+VT=1229686
+
+# this is for 0.4m/s - seems to be okay.
+VT=983749
+
+--------------------------------------------------------------------------------
+
+Detecting slack line:
+ not too bad with slack torque 15000 and current 300.
+A few tests:
+position move - end on current=378.000000 torq=29711.000000
+position move - end on current=324.000000 torq=29369.000000
+
+torque=1580 is about the threshold for wire out. 
+about the same for wire in.
+
+1. a high current/torque stop should decelerate more quickly 
+   than it is right now.
+2. how quickly does it sample the current and torque? not that fast - could combine to
+  a single command, see if anything else is slowing it down.
+3. is it necessary to read the current?  torque should be enough.
+ - actually probably not.  It can be quite high even with some force
+   on the line.
+4. What about falling back to a torque mode in these situations?
+5. Double
+
+
+
+Dimensions:
+ from inner spool to edge of drum - 50mm
+ diameter of guards 17.2cm
+ radius of spool is 0.9cm smaller
+  => max. diameter of spool 17.2 - 2*0.9 = 15.4cm
+  => min. diameter of spool 17.2 - 2*0.9 - 2*5.0 = 5.4cm
+  => "full" diameter of spool 15.4 -2*1.0 = 13.4cm
+ one revolution on empty drum 17cm (or 16.96 from diameter)
+
+verified revolutions: it's good!
+
+Time to reel in all of the line (112m), with velocity reading
+0.4: 
+VT=-983749
+elapsed: 6:25 (+-10)
+revolutions: -415.4
+
+so that's actually 0.29 m/s
+
+After marking the line at 10m intervals:
+  wire out      winch report
+   10.0         10.11
+   20.0         20.44
+   30.0         30.83
+   40.0         41.31
+   50.0         51.66 (some loose windings in there)
+   60.0         62.16
+   70.0         72.54
+   80.0         83.15
+   90.0         93.68
+  100.0        104.31
+  110.0        115.04
+  115.0        120.42
+
+410.6 revolutions total.
+
+but that was with a slightly loose wind.  On bringing it back in, the wind was 
+tighter, and took 423 revolutions.
+
+So what changes would be necessary to make the above numbers line up?
+
+################################################################################
+
+TODO: have things like torque, position, current avoid double querying.
+Something like having a "freshness" argument, so that when it matters, we
+can force a new query, but for the GUI, can report a value that's 2 seconds
+old and avoid querying over and over.
+
+TODO: there is some ambiguity in read_motor_velocity() - sometimes we want
+ a velocity as if the spool were full, and sometimes we want the estimated
+ actual wire velocity.
+
+TODO: if it gets a position fault on return, needs a better fallback - 
+  maybe try a bit more, then give up?
+  at the moment, when running at high but not really high recovery speeds,
+  it's getting a position fault when there is significant load.
+  (e.g. at a speed of -0.37)
+
+  In trying to replicate this, it wasn't all that touchy.
+
