@@ -22,6 +22,8 @@ class CTD(object):
     depth_override=None
 
     def __init__(self):
+        self.log = logging.getLogger('main')
+
         self.lock = threading.Lock()
         self.thread = None
         self.abort_async = False
@@ -29,10 +31,6 @@ class CTD(object):
         
         self.monitor = HumminbirdMonitor()
         self.winch = aniwinch.AnimaticsWinch()
-        self.init_logger()
-
-    def init_logger(self):
-        self.log = logging.getLogger('ctd')
         
     @async('cast on gpio')
     def cast_on_gpio(self):
@@ -329,10 +327,10 @@ class CTD(object):
         # a list of parameters to update periodically
         self.state_values = [ ['Depth',lambda: "%.2f m"%self.monitor.maxDepth],
                               ['GPS velocity',lambda: "%.2f m/s"%self.monitor.velocity],
-                              ['Cable out',lambda: "%.2f m/%.2frev"%self.winch.read_cable_out(extra=True) ],
-                              ['Cable speed',lambda: "%.2f m/s"%self.winch.read_motor_velocity() ],
-                              ['Winch current',lambda: "%.0f mA?"%self.winch.read_motor_current()],
-                              ['Winch torque',lambda: "%.0f"%self.winch.read_motor_torque()],
+                              ['Cable out',lambda: "%.2f m/%.2frev"%self.winch.get_cable_out(1.0,extra=True) ],
+                              ['Cable speed',lambda: "%.2f m/s"%self.winch.get_velocity(1.0) ],
+                              ['Winch current',lambda: "%.0f mA?"%self.winch.get_current(1.0)],
+                              ['Winch torque',lambda: "%.0f"%self.winch.get_torque(1.0)],
                               ['Winch action',lambda: self.winch.async_action],
                               ['CTD action',lambda: self.async_action],
                               ['GPIO from APM',lambda: self.gpio().cast_signal()],
@@ -389,6 +387,20 @@ class CTD(object):
                     pass
             add_gen_config(text,setter,getter)
 
+        def add_bool_config(text,obj,attr):
+            lab = Tkinter.Label(self.config,text=text)
+            ivar = Tkinter.IntVar()
+            val = Tkinter.Checkbutton(self.config,variable=ivar)
+            
+            ivar.set( int(bool(getattr(obj,attr))) )
+            def real_setter(*args):
+                v = ivar.get()
+                setattr(obj,attr,bool(int(v)))
+            ivar.trace('w', real_setter )
+            lab.grid(row=len(self.config_values),column=0)
+            val.grid(row=len(self.config_values),column=1)
+            self.config_values.append(ivar)
+
         add_float_config("Target velocity [m/s]", self.winch, "target_velocity", "%.2f")
         add_float_config('Inner radius [m]', self.winch,"spool_radius_inner", "%.4f")
         add_float_config('Outer radius [m]', self.winch,"spool_radius_outer", "%.4f")
@@ -405,6 +417,8 @@ class CTD(object):
         add_gen_config('Override depth',
                        self.set_depth_override_str,
                        self.get_depth_override_str)
+        
+        add_bool_config("Always reset?",self.winch,"reset_after_cast")
 
     def set_depth_override_str(self,v):
         v=v.strip()
@@ -448,14 +462,9 @@ class CTD(object):
         
         sys.exit()
     
+
 if __name__ == '__main__':
     ctd = CTD()
     ctd.gui()
     
 
-# TODO
-#  verify that the gpio.write is properly stopping the thrust
-#  add option to disable hardware mode
-#  etc.etc.
-#  update config values from GUI - subclass??
-#  joystick interface

@@ -164,10 +164,6 @@ Something like having a "freshness" argument, so that when it matters, we
 can force a new query, but for the GUI, can report a value that's 2 seconds
 old and avoid querying over and over.
 
-TODO: there is some ambiguity in read_motor_velocity() - sometimes we want
- a velocity as if the spool were full, and sometimes we want the estimated
- actual wire velocity.
-
 TODO: if it gets a position fault on return, needs a better fallback - 
   maybe try a bit more, then give up?
   at the moment, when running at high but not really high recovery speeds,
@@ -176,3 +172,18 @@ TODO: if it gets a position fault on return, needs a better fallback -
 
   In trying to replicate this, it wasn't all that touchy.
 
+TODO: it's overshooting on reel out after resetting. Not a big problem, but 
+  weird.
+
+
+TESTING: 
+  With no CTD, just acting against springs, needs at least 10kg to reset frame.
+  With CTD, 20kg works okay.
+  Ease from block-a-block changed to 0.67
+  Bringing it up all the way has a few problems:
+   - Chafing of line against edge of A-frame.  Even if it doesn't transit like this,
+     it's a problem because it's always the same part of the line.
+   - the up position leaves the CTD just above the exhaust.  Probably bad.
+ 
+
+ 

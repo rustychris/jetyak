@@ -1,46 +1,57 @@
 import sys
 import threading, serial, time
 import winch_settings
+import logging
+import random        
 
 class HumminbirdMonitorReal(object):
+    p=None
+
     def __init__(self):
-        self.maxDepth = 10
-        self.velocity = 10
+        self.maxDepth = 1.0
+        self.velocity = 0.0
         self.monitor = True
+        self.log=logging.getLogger('humm')
+
         self.lock = threading.Lock()
         self.open_serial()
         self.thread = threading.Thread(target=self.monitorDepthAndSpeed)
         self.thread.setDaemon(1)
         self.thread.start()
+        self.nmealog=logging.getLogger('nmea')
     def open_serial(self):
-        print "real serial open"
-        self.p = serial.Serial(winch_settings.hummingbird_com_port, baudrate=4800, timeout=5)
+        self.log.debug("real serial open")
+        try:
+            self.p = serial.Serial(winch_settings.hummingbird_com_port, baudrate=4800, timeout=5)
+        except OSError as exc:
+            self.log.critical("Failed to open Humminbird port %s"%(winch_settings.hummingbird_com_port))
+            sys.exit(1)
+
     def __del__(self):
         self.close()
     def close(self):
         self.monitor=False
         if self.p:
             self.p.close()
-            print "Closed Hummingbird serial"
+            self.log.info("Closed Hummingbird serial")
     def monitorDepthAndSpeed(self):
-        #print "top of monitor thread"
+        """ called asynchronously to watch humminbird NMEA string,
+        updating maxDepth and velocity as NMEA strings come in.
+        """
         try:
-            #print "top of try"
             self.maxDepth = 5
             while self.monitor:
-                #print "top of loop"
                 l = self.p.readline()
                 if l == "":
-                    # print "Got empty response hummingbird"
                     pass
+                self.nmealog.info(l)
                 parts = l.split(',')
-                #print l
                 if parts[0] == '$INDPT':
                     try:
                         maxDepth = float(parts[1])
-                        # print 'new max depth %f' % self.maxDepth
+                        self.log.debug('new max depth %f' % self.maxDepth)
                     except:
-                        print 'trouble parsing indpt ' + parts[1]
+                        self.log.warn('trouble parsing indpt ' + parts[1])
                         maxDepth = 0
                     with self.lock:
                         self.maxDepth = maxDepth
@@ -57,32 +68,46 @@ class HumminbirdMonitorReal(object):
                     with self.lock:
                         self.velocity = velocity
                 else:
-                    #print "Unknown nmea packet:"
-                    #print l
                     pass
-        except Exception,exc:
+        except Exception as exc:
             if self.monitor:
-                print "monitor thread died"
-                print exc
+                self.log.error("monitor thread died")
+                self.log.error(str(exc))
             else:
                 pass # on our way out.
     def moving(self):
         return self.velocity > 0.5
-        
+
+
 class HumminbirdMonitorTest(HumminbirdMonitorReal):
     """ stand-in for the real hummingbird
     """
-    responses =["$INDPT,1.0",
-                "$INVTG,one,two,three,four,five,six,2.0"]
     def open_serial(self):
         self.p = self
         self.readline = self.readline_gen().next
     def readline_gen(self):
         while 1:
             # print "Reading fake hummingbird"
-            for nmea in self.responses:
-                time.sleep(1.0)
-                yield nmea
+            time.sleep(1.0)
+            fake_depth=1 + random.random()*1.0
+            yield "$INDPT,9.5,-0.2*64"
+
+            yield "$INDPT,%.1f,-0.2*HH"%fake_depth
+
+            # VTG: not sure how many of these are actually 
+            # filled in by the humminbird:
+            time.sleep(1.0)
+            # This is actually copied from somebody's Humminbird stream,
+            # though not sure it's the same model.
+            # That's 11.1degT, 24.9deg M 9.9 knots, 18.4 kph
+            yield "$INVTG,11.1,T,24.9,M,9.9,N,18.4,K*6D"
+
+            # some other lines:
+            for l in ["$INRMC,180048,A,4409.5583,N,07448.3608,W,10.1,12.6,280607,13.8,W*57",
+                      "$INGGA,180049,4409.5610,N,07448.3597,W,2,09,0.9,450.1,M,,,,*18"]:
+                time.sleep(0.1)
+                yield l
+
     def close(self):
         pass
 
