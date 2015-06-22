@@ -1,7 +1,6 @@
 *this file is the updated incarnation of pc/winch_control/how-to-use-gpio-thing.txt*
 
-GPIO Interface
-===
+###GPIO Interface###
 
 The players:
 
