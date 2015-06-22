@@ -37,5 +37,20 @@ get a window like this:
  * **GPIO to APM** the signal sent from the PC to the Ardupilot.  When ctd.py starts, this will be 'None,' indicating that the signal is in whatever state it was in before ctd.py started.  A '0' means the ardupilot can throttle up, and '1' signals the ardupilot to stay at idle.
  
 
- 
+**Right column: settings**
+
+ * **Target velocity** for casts, the target wire speed in m/s, when the drum is full.  Note that there is a maximum drum velocity, and setting the target velocity close to this maximum will increase faults.  `vt_max` (in `aniwinch.py`) is used to limit the maximum velocity which will actually be commanded to the motor.  It's around 0.4 m/s.
+ * **Inner radius** radius of the drum when all cable is out.
+ * **Outer radius** radius of the drum plus cable when all cable is in.  Note that the third parameter for calculating the wire out, `spool_revolutions_full`, is not currently accessible via the gui.  See `aniwinch.py`.
+ * **Full-in force** roughly in kilograms-force, this is the tension which will be exerted when trying to find the full-in position.  I.e. should be a little bit greater than the mass of the package.
+ * **Zero tension current** Threshold for current draw, above which the line may be slack.
+ * **Deploy slack torque** Threshold for drive torque, above which the line may be slack.
+ * **Arm length** how much cable length corresponds to the CTD being just mated with the basket, and when the A-frame is in the up/transit/home position.
+ * **Cage length** how much cable length corresponds to the CTD cage breaking the water surface and the cage mating with the basket.
+ * **Towyo factor** multiplier on the depth for judging how much wire to put out when tow-yoing, to account for wire angle when the Jetyak is moving.
+ * **Ease from block-a-block** During "Recover and reset CTD", after stalling the motor at the "full-in force", then ease the wire this distance.
+ * **Max power fraction** Configures the maximum power output of the winch.  Usually 1.00.
+ * **Override depth** if there is a number in this box, it will be used instead of the Humminbird depth when performing a cast. 
+ * **Always reset** if checked, then every cast will end with the equivalent of "Recover and reset CTD", instead of relying on the shaft encoder to return to the proper home position.
+
  
