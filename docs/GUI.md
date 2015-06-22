@@ -1,5 +1,4 @@
-the GUI
-===
+###the GUI###
 
 To start the gui, remote desktop to the Jetyak PC, then double-click "ctd.py" on the desktop.  You should
 get a window like this:
