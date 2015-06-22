@@ -1,5 +1,4 @@
-SmartMotor interaction and control strategies
-===
+###SmartMotor interaction and control strategies###
 
 The SmartMotor is smart.  Sometimes too smart, sometimes not quite smart enough.  
 
