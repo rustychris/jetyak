@@ -1,4 +1,4 @@
-General info related to the jetyak winch
+###Controlling and interfacing with the jetyak winch###
 
  * [GPIO interface](GpioInterface.md)
  * [PC GUI](GUI.md)
